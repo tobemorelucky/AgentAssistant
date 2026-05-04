@@ -78,3 +78,18 @@ dmypy.json
 # Ruff
 .ruff_cache/
 
+# Environment / secrets
+.env
+.env.*
+!.env.example
+
+# Secret files
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+
+# Local databases
+*.sqlite3
+*.db

@@ -36,6 +36,13 @@
                     </div>
                 </div>
                 
+                <div class="skill-drafts-section">
+                    <div class="history-header">
+                        <span>Skill 草稿</span>
+                    </div>
+                    <div class="skill-draft-list" id="skillDraftList"></div>
+                </div>
+                
             </div>
         </aside>
 
@@ -124,6 +131,31 @@
             <div class="loading-spinner"></div>
             <div class="loading-text">智能运维分析中，请稍候...</div>
             <div class="loading-subtext">后端正在处理，请耐心等待</div>
+        </div>
+    </div>
+
+    <div id="approvalModal" class="modal-overlay hidden">
+        <div class="modal-card">
+            <h3>危险工具审批</h3>
+            <p id="approvalReason" class="modal-copy"></p>
+            <div class="modal-meta">
+                <div><strong>工具：</strong><span id="approvalToolName"></span></div>
+                <div><strong>参数：</strong><span id="approvalToolArgs"></span></div>
+            </div>
+            <div class="modal-actions">
+                <button id="approvalRejectBtn" class="modal-btn secondary">拒绝</button>
+                <button id="approvalApproveBtn" class="modal-btn primary">批准并继续</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="skillDraftModal" class="modal-overlay hidden">
+        <div class="modal-card modal-large">
+            <div class="modal-header">
+                <h3 id="skillDraftModalTitle">Skill 草稿</h3>
+                <button id="skillDraftModalClose" class="modal-close-btn">关闭</button>
+            </div>
+            <pre id="skillDraftModalContent" class="skill-draft-preview"></pre>
         </div>
     </div>
 

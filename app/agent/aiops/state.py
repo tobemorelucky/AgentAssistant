@@ -1,24 +1,24 @@
-"""
-通用 Plan-Execute-Replan 状态定义
-基于 LangGraph 官方教程实现
-"""
+"""AIOps Agent workflow state."""
 
-from typing import List, TypedDict, Annotated
+from __future__ import annotations
+
 import operator
+from typing import Annotated, Any, List, TypedDict
 
 
-class PlanExecuteState(TypedDict):
-    """Plan-Execute-Replan 状态"""
-    
-    # 用户输入（任务描述）
+class PlanExecuteState(TypedDict, total=False):
+    """Plan-Execute-Replan state with governance metadata."""
+
+    session_id: str
     input: str
-    
-    # 执行计划（步骤列表）
+    entry_node: str
+    status: str
     plan: List[str]
-    
-    # 已执行的步骤历史
-    # 使用 operator.add 实现追加式更新（而非覆盖）
-    past_steps: Annotated[List[tuple], operator.add]
-    
-    # 最终响应/报告
+    past_steps: Annotated[List[tuple[str, str]], operator.add]
     response: str
+    matched_skills: List[dict[str, Any]]
+    similar_incidents: List[dict[str, Any]]
+    trace_events: Annotated[List[dict[str, Any]], operator.add]
+    tools_used: Annotated[List[str], operator.add]
+    verifier_result: dict[str, Any]
+    pending_action: dict[str, Any] | None

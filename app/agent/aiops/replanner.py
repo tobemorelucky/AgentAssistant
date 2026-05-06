@@ -11,6 +11,7 @@ from pydantic import BaseModel, Field
 from loguru import logger
 
 from app.config import config
+from app.agent.aiops.trace import create_trace_event
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
@@ -122,6 +123,8 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
     input_text = state.get("input", "")
     plan = state.get("plan", [])
     past_steps = state.get("past_steps", [])
+    session_id = state.get("session_id", "default")
+    verifier_result = state.get("verifier_result", {})
 
     logger.info(f"剩余计划步骤: {len(plan)}")
     logger.info(f"已执行步骤: {len(past_steps)}")
@@ -136,6 +139,19 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
             temperature=0
         )
         return await _generate_response(state, llm)
+
+    if verifier_result and not verifier_result.get("passed", True) and plan:
+        return {
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="warning",
+                    title="Replanner accepted verifier follow-up steps",
+                    result_summary=" | ".join(plan[:3]),
+                )
+            ]
+        }
 
     # 获取可用工具列表
     try:
@@ -226,11 +242,31 @@ async def replanner(state: PlanExecuteState) -> Dict[str, Any]:
                     return {"plan": new_steps}
                 else:
                     logger.warning("replan 但未提供新步骤，继续执行原计划")
-                    return {}
+                    return {
+                        "trace_events": [
+                            create_trace_event(
+                                session_id=session_id,
+                                node="replanner",
+                                status="warning",
+                                title="Replanner kept original plan",
+                                result_summary="No new steps returned",
+                            )
+                        ]
+                    }
 
             else:  # action == "continue"
                 logger.info("决定继续执行当前计划")
-                return {}  # 不修改状态，继续执行
+                return {
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="success",
+                            title="Replanner continue",
+                            result_summary=f"Remaining steps: {len(plan)}",
+                        )
+                    ]
+                }
 
         except Exception as e:
             logger.error(f"重新规划失败: {e}, 继续执行剩余计划")
@@ -248,6 +284,7 @@ async def _generate_response(state: PlanExecuteState, llm: ChatQwen) -> Dict[str
 
     input_text = state.get("input", "")
     past_steps = state.get("past_steps", [])
+    session_id = state.get("session_id", "default")
 
     # 格式化执行历史
     execution_history = "\n\n".join([
@@ -275,7 +312,18 @@ async def _generate_response(state: PlanExecuteState, llm: ChatQwen) -> Dict[str
 
         logger.info(f"最终响应生成完成，长度: {len(final_response)}")
 
-        return {"response": final_response}
+        return {
+            "response": final_response,
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="success",
+                    title="Final report drafted",
+                    result_summary=final_response[:280],
+                )
+            ],
+        }
 
     except Exception as e:
         logger.error(f"生成响应失败: {e}")
@@ -291,7 +339,18 @@ async def _generate_response(state: PlanExecuteState, llm: ChatQwen) -> Dict[str
 ## 说明
 由于系统异常，无法生成完整响应。以上是已收集的信息。
 """
-        return {"response": fallback_response}
+        return {
+            "response": fallback_response,
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="error",
+                    title="Fallback response drafted",
+                    result_summary=str(e),
+                )
+            ],
+        }
 
 
 def _format_simple_steps(past_steps: list) -> str:

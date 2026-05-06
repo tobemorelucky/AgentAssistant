@@ -1,0 +1,37 @@
+tools:
+  get_current_time:
+    level: read_only
+  retrieve_knowledge:
+    level: read_only
+  get_current_timestamp:
+    level: read_only
+  get_region_code_by_name:
+    level: read_only
+  get_topic_info_by_name:
+    level: read_only
+  search_topic_by_service_name:
+    level: read_only
+  search_log:
+    level: read_only
+  query_cpu_metrics:
+    level: read_only
+  query_memory_metrics:
+    level: read_only
+  query_process_list:
+    level: read_only
+  search_historical_tickets:
+    level: read_only
+  get_service_info:
+    level: read_only
+  list_all_services:
+    level: read_only
+  analyze_log_pattern:
+    level: low_risk
+  search_service_logs:
+    level: low_risk
+  restart_service:
+    level: dangerous
+  scale_service:
+    level: dangerous
+  run_shell_command:
+    level: blocked

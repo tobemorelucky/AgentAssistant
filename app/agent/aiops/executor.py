@@ -3,16 +3,37 @@ Executor 节点：执行单个步骤
 基于 LangGraph 官方教程实现
 """
 
-from typing import Dict, Any
-from langchain_core.messages import HumanMessage, SystemMessage
+from __future__ import annotations
+
+import time
+import uuid
+from datetime import datetime, timezone
+from typing import Any, Dict
+
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_qwq import ChatQwen
-from langgraph.prebuilt import ToolNode
 from loguru import logger
 
+from app.agent.aiops.tool_policy import check_tool_policy
+from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
+
+
+async def _invoke_tool(tool: Any, args: dict[str, Any]) -> Any:
+    if hasattr(tool, "ainvoke"):
+        return await tool.ainvoke(args)
+    if hasattr(tool, "invoke"):
+        return tool.invoke(args)
+    if callable(tool):
+        return tool(**args)
+    raise RuntimeError(f"Tool '{getattr(tool, 'name', tool)}' is not invokable")
+
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 async def executor(state: PlanExecuteState) -> Dict[str, Any]:
@@ -30,24 +51,24 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
         logger.info("计划为空，跳过执行")
         return {}
 
-    # 取出第一个步骤
+    session_id = state.get("session_id", "default")
     task = plan[0]
     logger.info(f"当前任务: {task}")
 
     try:
         # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
+        local_tools = [get_current_time, retrieve_knowledge]
 
         # 获取 MCP 工具
         mcp_client = await get_mcp_client_with_retry()
         mcp_tools = await mcp_client.get_tools()
         logger.info(f"可用工具数量: 本地 {len(local_tools)} + MCP {len(mcp_tools)}")
 
-        # 合并所有工具
         all_tools = local_tools + mcp_tools
+        tool_map = {
+            tool.name if hasattr(tool, "name") else str(tool): tool
+            for tool in all_tools
+        }
 
         # 创建 LLM（绑定工具）
         llm = ChatQwen(
@@ -56,9 +77,6 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             temperature=0
         )
         llm_with_tools = llm.bind_tools(all_tools)
-
-        # 创建工具节点（自动执行工具调用）
-        tool_node = ToolNode(all_tools)
 
         # 构建消息（只包含当前步骤，避免原始任务干扰）
         messages = [
@@ -78,38 +96,192 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
             HumanMessage(content=f"请执行以下任务: {task}")
         ]
 
-        # 第一步：LLM 决定是否调用工具
-        llm_response = await llm_with_tools.ainvoke(messages)
+        pending_action = state.get("pending_action")
+        approval_status = pending_action.get("status") if isinstance(pending_action, dict) else None
+        if pending_action and approval_status in {"approved", "rejected"}:
+            logger.info(f"恢复审批动作: {approval_status}")
+            llm_response = None
+            tool_calls = list(pending_action.get("tool_calls", []))
+        else:
+            llm_response = await llm_with_tools.ainvoke(messages)
+            tool_calls = list(getattr(llm_response, "tool_calls", []) or [])
+
         logger.info(f"LLM 响应类型: {type(llm_response)}")
 
-        # 第二步：如果有工具调用，执行工具
-        if hasattr(llm_response, "tool_calls") and llm_response.tool_calls:
-            logger.info(f"检测到 {len(llm_response.tool_calls)} 个工具调用")
-            
-            # 使用 ToolNode 自动执行工具
-            messages.append(llm_response)
-            tool_messages = await tool_node.ainvoke({"messages": messages})
-            
-            # 第三步：将工具结果返回给 LLM 生成最终答案
-            messages.extend(tool_messages["messages"])
+        if tool_calls:
+            logger.info(f"检测到 {len(tool_calls)} 个工具调用")
+            if llm_response is not None:
+                messages.append(llm_response)
+
+            if pending_action and approval_status == "rejected":
+                result = "人工审批拒绝了危险工具调用，未执行对应操作。"
+                return {
+                    "plan": plan[1:],
+                    "pending_action": None,
+                    "status": "running",
+                    "past_steps": [(task, result)],
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="approval",
+                            status="warning",
+                            title="Dangerous tool rejected",
+                            tool_name=tool_calls[0].get("name"),
+                            tool_args=tool_calls[0].get("args", {}),
+                            result_summary=result,
+                        )
+                    ],
+                }
+
+            decisions = []
+            blocked_decisions = []
+            dangerous_decisions = []
+            for tool_call in tool_calls:
+                decision = check_tool_policy(tool_call.get("name", "unknown"))
+                decisions.append((tool_call, decision))
+                if decision["decision"] == "reject":
+                    blocked_decisions.append((tool_call, decision))
+                elif decision["decision"] == "approval_required":
+                    dangerous_decisions.append((tool_call, decision))
+
+            if blocked_decisions:
+                blocked_tool, blocked_policy = blocked_decisions[0]
+                result = blocked_policy["reason"]
+                return {
+                    "plan": plan[1:],
+                    "status": "running",
+                    "past_steps": [(task, result)],
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="tool_call",
+                            status="error",
+                            title="Blocked tool call rejected",
+                            tool_name=blocked_tool.get("name"),
+                            tool_args=blocked_tool.get("args", {}),
+                            result_summary=result,
+                        )
+                    ],
+                }
+
+            if dangerous_decisions and approval_status != "approved":
+                dangerous_tool, dangerous_policy = dangerous_decisions[0]
+                action_id = str(uuid.uuid4())
+                action = {
+                    "action_id": action_id,
+                    "step": task,
+                    "tool_name": dangerous_tool.get("name", "unknown"),
+                    "tool_args_summary": summarize_result(dangerous_tool.get("args", {})),
+                    "tool_calls": tool_calls,
+                    "reason": dangerous_policy["reason"],
+                    "status": "pending",
+                    "created_at": _now_iso(),
+                }
+                return {
+                    "pending_action": action,
+                    "status": "paused",
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="approval",
+                            status="pending",
+                            title="Dangerous tool approval required",
+                            tool_name=dangerous_tool.get("name"),
+                            tool_args=dangerous_tool.get("args", {}),
+                            result_summary=dangerous_policy["reason"],
+                            metadata={"action_id": action_id},
+                        )
+                    ],
+                }
+
+            tool_messages = []
+            tools_used = []
+            trace_events = []
+            for tool_call, decision in decisions:
+                tool_name = tool_call.get("name", "unknown")
+                args = tool_call.get("args", {})
+                tool = tool_map.get(tool_name)
+                if tool is None:
+                    raise RuntimeError(f"未找到工具: {tool_name}")
+
+                started_at = _now_iso()
+                started_ts = time.perf_counter()
+                tool_result = await _invoke_tool(tool, args)
+                duration_ms = int((time.perf_counter() - started_ts) * 1000)
+                ended_at = _now_iso()
+                trace_events.append(
+                    create_trace_event(
+                        session_id=session_id,
+                        node="tool_call",
+                        status="success",
+                        title=f"Executed {tool_name}",
+                        tool_name=tool_name,
+                        tool_args=args,
+                        result_summary=summarize_result(tool_result),
+                        started_at=started_at,
+                        ended_at=ended_at,
+                        duration_ms=duration_ms,
+                        metadata={"level": decision["level"]},
+                    )
+                )
+                tools_used.append(tool_name)
+                tool_messages.append(
+                    ToolMessage(
+                        content=summarize_result(tool_result, max_length=800),
+                        tool_call_id=tool_call.get("id") or tool_name,
+                    )
+                )
+
+            messages.extend(tool_messages)
             final_response = await llm_with_tools.ainvoke(messages)
-            result = final_response.content if hasattr(final_response, 'content') else str(final_response)
+            result = final_response.content if hasattr(final_response, "content") else str(final_response)
+            return {
+                "plan": plan[1:],
+                "pending_action": None,
+                "status": "running",
+                "past_steps": [(task, result)],
+                "tools_used": tools_used,
+                "trace_events": trace_events + [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="executor",
+                        status="success",
+                        title="Step executed with tool evidence",
+                        result_summary=summarize_result(result),
+                    )
+                ],
+            }
         else:
-            # 没有工具调用，直接使用 LLM 的输出
             logger.info("LLM 未调用工具，直接返回结果")
             result = llm_response.content if hasattr(llm_response, 'content') else str(llm_response)
-
-        logger.info(f"步骤执行完成，结果长度: {len(result)}")
-
-        # 返回更新：移除已执行的步骤，添加执行历史
-        return {
-            "plan": plan[1:],  # 移除第一个步骤
-            "past_steps": [(task, result)],  # 使用 operator.add 追加
-        }
+            return {
+                "plan": plan[1:],
+                "status": "running",
+                "past_steps": [(task, result)],
+                "trace_events": [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="executor",
+                        status="success",
+                        title="Step executed without tools",
+                        result_summary=summarize_result(result),
+                    )
+                ],
+            }
 
     except Exception as e:
         logger.error(f"执行步骤失败: {e}", exc_info=True)
         return {
             "plan": plan[1:],
+            "status": "running",
             "past_steps": [(task, f"执行失败: {str(e)}")],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="executor",
+                    status="error",
+                    title="Step execution failed",
+                    result_summary=str(e),
+                )
+            ],
         }

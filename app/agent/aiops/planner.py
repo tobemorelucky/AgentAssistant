@@ -10,6 +10,9 @@ from langchain_qwq import ChatQwen
 from pydantic import BaseModel, Field
 from loguru import logger
 
+from app.agent.aiops.incident_memory import find_similar_incidents
+from app.agent.aiops.profile_loader import get_agent_profile_prompt
+from app.agent.aiops.trace import create_trace_event
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
@@ -71,9 +74,30 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     logger.info("=== Planner：制定执行计划 ===")
 
     input_text = state.get("input", "")
+    session_id = state.get("session_id", "default")
     logger.info(f"用户输入: {input_text}")
 
     try:
+        agent_profile = get_agent_profile_prompt()
+        matched_skills = state.get("matched_skills", [])
+        skill_context = (
+            "\n\n".join(skill.get("summary", "") for skill in matched_skills)
+            if matched_skills
+            else "无命中 Skill，按通用 AIOps 诊断流程规划。"
+        )
+
+        similar_incidents = find_similar_incidents(input_text, limit=3)
+        incident_context = (
+            "\n\n".join(
+                f"- 任务: {incident['user_task']}\n"
+                f"  Root cause summary: {incident['root_cause']}\n"
+                f"  Tools: {', '.join(incident['tools_used'])}"
+                for incident in similar_incidents
+            )
+            if similar_incidents
+            else "无相似 Incident Case。"
+        )
+
         # 步骤1: 查询内部文档获取相关经验
         logger.info("查询内部文档，寻找相关经验...")
         experience_docs = ""
@@ -134,7 +158,22 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         plan_result = await planner_chain.ainvoke({
             "messages": [("user", input_text)],
             "tools_description": tools_description,
-            "experience_context": experience_context
+            "experience_context": (
+                dedent(
+                    f"""
+                    ## AGENT Profile
+                    {agent_profile}
+
+                    ## Matched Skills
+                    {skill_context}
+
+                    ## Similar Incident Cases
+                    {incident_context}
+
+                    {experience_context}
+                    """
+                ).strip()
+            ),
         })
 
         # 提取步骤列表
@@ -148,15 +187,36 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         for i, step in enumerate(plan_steps, 1):
             logger.info(f"  步骤{i}: {step}")
 
-        return {"plan": plan_steps}
+        trace_event = create_trace_event(
+            session_id=session_id,
+            node="planner",
+            status="success",
+            title=f"Planner generated {len(plan_steps)} steps",
+            result_summary=" | ".join(plan_steps[:3]),
+            metadata={
+                "matched_skills": [skill.get("name") for skill in matched_skills],
+                "similar_incidents": similar_incidents,
+            },
+        )
+
+        return {
+            "plan": plan_steps,
+            "similar_incidents": similar_incidents,
+            "trace_events": [trace_event],
+        }
 
     except Exception as e:
         logger.error(f"生成计划失败: {e}", exc_info=True)
         # 返回一个默认计划
         return {
-            "plan": [
-                "收集相关信息",
-                "分析数据",
-                "生成报告"
-            ]
+            "plan": ["收集相关信息", "分析数据", "生成报告"],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="planner",
+                    status="error",
+                    title="Planner fallback",
+                    result_summary=str(e),
+                )
+            ],
         }

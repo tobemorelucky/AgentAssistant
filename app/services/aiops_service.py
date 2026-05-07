@@ -406,6 +406,11 @@ class AIOpsService:
     async def diagnose(self, session_id: str = "default") -> AsyncGenerator[dict[str, Any], None]:
         """Compatibility wrapper for the existing /api/aiops endpoint."""
         aiops_task = self._build_aiops_task()
+        yield {
+            "type": "status",
+            "stage": "workflow_started",
+            "message": "AIOps Agent 已接收诊断请求，正在初始化工作流。",
+        }
         async for event in self.execute(aiops_task, session_id):
             if event.get("type") == "complete":
                 yield {

@@ -1,7 +1,7 @@
 class SuperBizAgentApp {
     constructor() {
-        this.apiBaseUrl = '/api';
-        this.currentMode = 'quick';
+        this.apiBaseUrl = "/api";
+        this.currentMode = "quick";
         this.sessionId = this.generateSessionId();
         this.isStreaming = false;
         this.currentChatHistory = [];
@@ -16,77 +16,93 @@ class SuperBizAgentApp {
         this.initMarkdown();
         this.updateUI();
         this.renderChatHistory();
+        this.renderCurrentConversation();
         this.loadSkillDrafts();
-        this.checkAndSetCentered();
     }
 
     initializeElements() {
-        this.newChatBtn = document.getElementById('newChatBtn');
-        this.aiOpsSidebarBtn = document.getElementById('aiOpsSidebarBtn');
-        this.messageInput = document.getElementById('messageInput');
-        this.sendButton = document.getElementById('sendButton');
-        this.toolsBtn = document.getElementById('toolsBtn');
-        this.uploadFileItem = document.getElementById('uploadFileItem');
-        this.modeSelectorBtn = document.getElementById('modeSelectorBtn');
-        this.modeDropdown = document.getElementById('modeDropdown');
-        this.currentModeText = document.getElementById('currentModeText');
-        this.fileInput = document.getElementById('fileInput');
-        this.chatMessages = document.getElementById('chatMessages');
-        this.chatHistoryList = document.getElementById('chatHistoryList');
-        this.skillDraftList = document.getElementById('skillDraftList');
-        this.loadingOverlay = document.getElementById('loadingOverlay');
-        this.approvalModal = document.getElementById('approvalModal');
-        this.approvalReason = document.getElementById('approvalReason');
-        this.approvalToolName = document.getElementById('approvalToolName');
-        this.approvalToolArgs = document.getElementById('approvalToolArgs');
-        this.approvalApproveBtn = document.getElementById('approvalApproveBtn');
-        this.approvalRejectBtn = document.getElementById('approvalRejectBtn');
-        this.skillDraftModal = document.getElementById('skillDraftModal');
-        this.skillDraftModalTitle = document.getElementById('skillDraftModalTitle');
-        this.skillDraftModalContent = document.getElementById('skillDraftModalContent');
-        this.skillDraftModalClose = document.getElementById('skillDraftModalClose');
+        this.newChatBtn = document.getElementById("newChatBtn");
+        this.aiOpsSidebarBtn = document.getElementById("aiOpsSidebarBtn");
+        this.messageInput = document.getElementById("messageInput");
+        this.sendButton = document.getElementById("sendButton");
+        this.toolsBtn = document.getElementById("toolsBtn");
+        this.uploadFileItem = document.getElementById("uploadFileItem");
+        this.modeSelectorBtn = document.getElementById("modeSelectorBtn");
+        this.modeDropdown = document.getElementById("modeDropdown");
+        this.currentModeText = document.getElementById("currentModeText");
+        this.fileInput = document.getElementById("fileInput");
+        this.chatContainer = document.querySelector(".chat-container");
+        this.chatMessages = document.getElementById("chatMessages");
+        this.chatHistoryList = document.getElementById("chatHistoryList");
+        this.skillDraftList = document.getElementById("skillDraftList");
+        this.loadingOverlay = document.getElementById("loadingOverlay");
+        this.approvalModal = document.getElementById("approvalModal");
+        this.approvalReason = document.getElementById("approvalReason");
+        this.approvalToolName = document.getElementById("approvalToolName");
+        this.approvalToolArgs = document.getElementById("approvalToolArgs");
+        this.approvalApproveBtn = document.getElementById("approvalApproveBtn");
+        this.approvalRejectBtn = document.getElementById("approvalRejectBtn");
+        this.skillDraftModal = document.getElementById("skillDraftModal");
+        this.skillDraftModalTitle = document.getElementById("skillDraftModalTitle");
+        this.skillDraftModalContent = document.getElementById("skillDraftModalContent");
+        this.skillDraftModalClose = document.getElementById("skillDraftModalClose");
     }
 
     bindEvents() {
-        this.newChatBtn?.addEventListener('click', () => this.newChat());
-        this.aiOpsSidebarBtn?.addEventListener('click', () => this.triggerAIOps());
-        this.sendButton?.addEventListener('click', () => this.sendMessage());
-        this.messageInput?.addEventListener('keypress', (event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
+        this.newChatBtn?.addEventListener("click", () => this.newChat());
+        this.aiOpsSidebarBtn?.addEventListener("click", () => this.triggerAIOps());
+        this.sendButton?.addEventListener("click", () => this.sendMessage());
+
+        this.messageInput?.addEventListener("keypress", (event) => {
+            if (event.key === "Enter" && !event.shiftKey) {
                 event.preventDefault();
                 this.sendMessage();
             }
         });
-        this.toolsBtn?.addEventListener('click', (event) => {
+
+        this.toolsBtn?.addEventListener("click", (event) => {
             event.stopPropagation();
-            this.toolsBtn.closest('.tools-btn-wrapper')?.classList.toggle('active');
+            this.toolsBtn.closest(".tools-btn-wrapper")?.classList.toggle("active");
         });
-        this.uploadFileItem?.addEventListener('click', () => this.fileInput?.click());
-        this.fileInput?.addEventListener('change', (event) => this.handleFileSelect(event));
-        this.modeSelectorBtn?.addEventListener('click', (event) => {
+
+        this.uploadFileItem?.addEventListener("click", () => {
+            this.fileInput?.click();
+            this.closeMenus();
+        });
+
+        this.fileInput?.addEventListener("change", (event) => this.handleFileSelect(event));
+
+        this.modeSelectorBtn?.addEventListener("click", (event) => {
             event.stopPropagation();
-            this.modeDropdown?.classList.toggle('open');
+            this.modeDropdown?.classList.toggle("open");
         });
-        this.modeDropdown?.querySelectorAll('.dropdown-item').forEach((item) => {
-            item.addEventListener('click', () => {
-                this.currentMode = item.dataset.mode || 'quick';
+
+        this.modeDropdown?.querySelectorAll(".dropdown-item").forEach((item) => {
+            item.addEventListener("click", () => {
+                this.currentMode = item.dataset.mode || "quick";
                 this.updateUI();
                 this.closeMenus();
             });
         });
-        this.approvalApproveBtn?.addEventListener('click', () => this.handleApprovalDecision(true));
-        this.approvalRejectBtn?.addEventListener('click', () => this.handleApprovalDecision(false));
-        this.skillDraftModalClose?.addEventListener('click', () => this.closeSkillDraftModal());
-        document.addEventListener('click', () => this.closeMenus());
+
+        this.approvalApproveBtn?.addEventListener("click", () => this.handleApprovalDecision(true));
+        this.approvalRejectBtn?.addEventListener("click", () => this.handleApprovalDecision(false));
+        this.skillDraftModalClose?.addEventListener("click", () => this.closeSkillDraftModal());
+        document.addEventListener("click", () => this.closeMenus());
     }
 
     initMarkdown() {
         const boot = () => {
-            if (typeof marked === 'undefined') {
+            if (typeof marked === "undefined") {
                 setTimeout(boot, 100);
                 return;
             }
-            marked.setOptions({ breaks: true, gfm: true, headerIds: false, mangle: false });
+            marked.setOptions({
+                breaks: true,
+                gfm: true,
+                headerIds: false,
+                mangle: false,
+            });
         };
         boot();
     }
@@ -97,23 +113,29 @@ class SuperBizAgentApp {
 
     updateUI() {
         if (this.currentModeText) {
-            this.currentModeText.textContent = this.currentMode === 'stream' ? '流式' : '快捷';
+            this.currentModeText.textContent = this.currentMode === "stream" ? "流式" : "快捷";
         }
         if (this.sendButton) this.sendButton.disabled = this.isStreaming;
         if (this.messageInput) this.messageInput.disabled = this.isStreaming;
-        this.modeDropdown?.querySelectorAll('.dropdown-item').forEach((item) => {
-            item.classList.toggle('active', item.dataset.mode === this.currentMode);
+        this.modeDropdown?.querySelectorAll(".dropdown-item").forEach((item) => {
+            item.classList.toggle("active", item.dataset.mode === this.currentMode);
         });
     }
 
     closeMenus() {
-        this.toolsBtn?.closest('.tools-btn-wrapper')?.classList.remove('active');
-        this.modeDropdown?.classList.remove('open');
+        this.toolsBtn?.closest(".tools-btn-wrapper")?.classList.remove("active");
+        this.modeDropdown?.classList.remove("open");
+    }
+
+    escapeHtml(text) {
+        const div = document.createElement("div");
+        div.textContent = text || "";
+        return div.innerHTML;
     }
 
     renderMarkdown(content) {
-        if (!content) return '';
-        if (typeof marked === 'undefined') return this.escapeHtml(content);
+        if (!content) return "";
+        if (typeof marked === "undefined") return this.escapeHtml(content);
         try {
             return marked.parse(content);
         } catch (_error) {
@@ -122,37 +144,39 @@ class SuperBizAgentApp {
     }
 
     highlightCodeBlocks(container) {
-        if (!container || typeof hljs === 'undefined') return;
-        container.querySelectorAll('pre code').forEach((block) => {
+        if (!container || typeof hljs === "undefined") return;
+        container.querySelectorAll("pre code").forEach((block) => {
             try {
                 hljs.highlightElement(block);
             } catch (_error) {}
         });
     }
 
-    escapeHtml(text) {
-        const div = document.createElement('div');
-        div.textContent = text || '';
-        return div.innerHTML;
-    }
-
     loadChatHistories() {
         try {
-            return JSON.parse(localStorage.getItem('chatHistories') || '[]');
+            return JSON.parse(localStorage.getItem("chatHistories") || "[]");
         } catch (_error) {
             return [];
         }
     }
 
     saveChatHistories() {
-        localStorage.setItem('chatHistories', JSON.stringify(this.chatHistories));
+        localStorage.setItem("chatHistories", JSON.stringify(this.chatHistories));
+    }
+
+    buildConversationTitle() {
+        const firstUser = this.currentChatHistory.find((entry) => entry.type === "user");
+        if (!firstUser) return "新对话";
+        return `${firstUser.content.slice(0, 30)}${firstUser.content.length > 30 ? "..." : ""}`;
     }
 
     saveCurrentChat() {
         if (this.currentChatHistory.length === 0) return;
-        const firstUser = this.currentChatHistory.find((entry) => entry.type === 'user');
-        const title = firstUser ? `${firstUser.content.slice(0, 30)}${firstUser.content.length > 30 ? '...' : ''}` : '新对话';
-        const payload = { id: this.sessionId, title, messages: [...this.currentChatHistory] };
+        const payload = {
+            id: this.sessionId,
+            title: this.buildConversationTitle(),
+            messages: [...this.currentChatHistory],
+        };
         const index = this.chatHistories.findIndex((entry) => entry.id === this.sessionId);
         if (index >= 0) this.chatHistories[index] = payload;
         else this.chatHistories.unshift(payload);
@@ -162,10 +186,11 @@ class SuperBizAgentApp {
 
     renderChatHistory() {
         if (!this.chatHistoryList) return;
-        this.chatHistoryList.innerHTML = '';
+        this.chatHistoryList.innerHTML = "";
+
         this.chatHistories.forEach((history) => {
-            const item = document.createElement('div');
-            item.className = 'history-item';
+            const item = document.createElement("div");
+            item.className = "history-item";
             item.innerHTML = `
                 <div class="history-item-content">
                     <span class="history-item-title">${this.escapeHtml(history.title)}</span>
@@ -176,17 +201,108 @@ class SuperBizAgentApp {
                     </svg>
                 </button>
             `;
-            item.addEventListener('click', (event) => {
-                if (!event.target.closest('.history-item-delete')) this.loadChatHistory(history);
+
+            item.addEventListener("click", (event) => {
+                if (!event.target.closest(".history-item-delete")) this.loadChatHistory(history);
             });
-            item.querySelector('.history-item-delete')?.addEventListener('click', (event) => {
+
+            item.querySelector(".history-item-delete")?.addEventListener("click", (event) => {
                 event.stopPropagation();
                 this.chatHistories = this.chatHistories.filter((entry) => entry.id !== history.id);
                 this.saveChatHistories();
                 this.renderChatHistory();
             });
+
             this.chatHistoryList.appendChild(item);
         });
+    }
+
+    setConversationState() {
+        const isEmpty = this.chatMessages?.children.length === 0;
+        this.chatContainer?.classList.toggle("centered", isEmpty);
+    }
+
+    scrollToBottom() {
+        if (this.chatMessages) this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
+    }
+
+    showNotification(message, type = "info") {
+        const notice = document.createElement("div");
+        notice.textContent = message;
+        notice.className = `notification notification-${type}`;
+        notice.style.position = "fixed";
+        notice.style.right = "20px";
+        notice.style.bottom = "20px";
+        notice.style.zIndex = "13000";
+        notice.style.padding = "12px 16px";
+        notice.style.borderRadius = "12px";
+        notice.style.boxShadow = "0 10px 20px rgba(0,0,0,0.16)";
+        notice.style.color = "#fff";
+        notice.style.background = type === "error" ? "#d93025" : type === "success" ? "#188038" : "#1a73e8";
+        notice.style.animation = "slideIn 0.2s ease";
+        document.body.appendChild(notice);
+
+        setTimeout(() => {
+            notice.style.animation = "slideOut 0.2s ease forwards";
+            setTimeout(() => notice.remove(), 220);
+        }, 2200);
+    }
+
+    createMessageElement(type, content, isLoading = false) {
+        const message = document.createElement("div");
+        message.className = `message ${type}`;
+
+        const body = document.createElement("div");
+        body.className = `message-content ${isLoading ? "loading-message-content" : ""}`;
+
+        if (isLoading) {
+            body.textContent = content || "处理中...";
+        } else if (type === "assistant") {
+            body.innerHTML = this.renderMarkdown(content);
+            this.highlightCodeBlocks(body);
+        } else {
+            body.textContent = content;
+        }
+
+        message.appendChild(body);
+        return message;
+    }
+
+    appendMessageElement(message) {
+        this.chatMessages?.appendChild(message);
+        this.setConversationState();
+        this.scrollToBottom();
+        return message;
+    }
+
+    addMessage(type, content, isLoading = false, persist = true, metadata = {}) {
+        const message = this.createMessageElement(type, content, isLoading);
+        this.appendMessageElement(message);
+
+        if (persist) {
+            this.currentChatHistory.push({
+                type,
+                content,
+                timestamp: new Date().toISOString(),
+                ...metadata,
+            });
+            this.saveCurrentChat();
+            this.renderChatHistory();
+        }
+        return message;
+    }
+
+    addLoadingMessage(content = "处理中...") {
+        return this.addMessage("assistant", content, true, false);
+    }
+
+    renderCurrentConversation() {
+        if (!this.chatMessages) return;
+        this.chatMessages.innerHTML = "";
+        this.currentChatHistory.forEach((message) => {
+            this.addMessage(message.type, message.content, false, false, message);
+        });
+        this.setConversationState();
     }
 
     loadChatHistory(history) {
@@ -195,9 +311,7 @@ class SuperBizAgentApp {
         this.currentAIOpsTrace = [];
         this.currentAIOpsMessage = null;
         this.pendingApproval = null;
-        this.chatMessages.innerHTML = '';
-        this.currentChatHistory.forEach((message) => this.addMessage(message.type, message.content, false, false));
-        this.checkAndSetCentered();
+        this.renderCurrentConversation();
         this.scrollToBottom();
     }
 
@@ -208,75 +322,20 @@ class SuperBizAgentApp {
         this.currentAIOpsTrace = [];
         this.currentAIOpsMessage = null;
         this.pendingApproval = null;
-        if (this.messageInput) this.messageInput.value = '';
-        if (this.chatMessages) this.chatMessages.innerHTML = '';
+        if (this.messageInput) this.messageInput.value = "";
+        this.renderCurrentConversation();
         this.closeApprovalModal();
         this.closeSkillDraftModal();
-        this.checkAndSetCentered();
         this.renderChatHistory();
-    }
-
-    checkAndSetCentered() {
-        document.body.classList.toggle('empty-chat', this.chatMessages?.children.length === 0);
-    }
-
-    scrollToBottom() {
-        if (this.chatMessages) this.chatMessages.scrollTop = this.chatMessages.scrollHeight;
-    }
-
-    showNotification(message, type = 'info') {
-        const notice = document.createElement('div');
-        notice.className = `notification notification-${type}`;
-        notice.textContent = message;
-        notice.style.position = 'fixed';
-        notice.style.right = '20px';
-        notice.style.bottom = '20px';
-        notice.style.zIndex = '13000';
-        notice.style.padding = '12px 16px';
-        notice.style.borderRadius = '12px';
-        notice.style.boxShadow = '0 10px 20px rgba(0,0,0,0.16)';
-        notice.style.background = type === 'error' ? '#d93025' : type === 'success' ? '#188038' : '#1a73e8';
-        notice.style.color = '#fff';
-        notice.style.animation = 'slideIn 0.2s ease';
-        document.body.appendChild(notice);
-        setTimeout(() => {
-            notice.style.animation = 'slideOut 0.2s ease forwards';
-            setTimeout(() => notice.remove(), 220);
-        }, 2200);
-    }
-
-    addMessage(type, content, isLoading = false, persist = true) {
-        const message = document.createElement('div');
-        message.className = `message ${type}-message`;
-        const body = document.createElement('div');
-        body.className = `message-content ${isLoading ? 'loading-message-content' : ''}`;
-        if (isLoading) body.textContent = content || '处理中...';
-        else if (type === 'assistant') {
-            body.innerHTML = this.renderMarkdown(content);
-            this.highlightCodeBlocks(body);
-        } else body.textContent = content;
-        message.appendChild(body);
-        this.chatMessages?.appendChild(message);
-        this.checkAndSetCentered();
-        this.scrollToBottom();
-        if (persist) {
-            this.currentChatHistory.push({ type, content, timestamp: new Date().toISOString() });
-            this.saveCurrentChat();
-            this.renderChatHistory();
-        }
-        return message;
-    }
-
-    addLoadingMessage(content = '处理中...') {
-        return this.addMessage('assistant', content, true, false);
     }
 
     renderTraceTimeline(messageElement, traceEntries = []) {
         if (!messageElement) return;
-        let panel = messageElement.querySelector('.trace-panel');
+
+        let panel = messageElement.querySelector(".trace-panel");
         if (!panel) {
-            panel = document.createElement('div');
-            panel.className = 'trace-panel';
+            panel = document.createElement("div");
+            panel.className = "trace-panel";
             panel.innerHTML = `
                 <button class="trace-toggle" type="button">
                     <span>Agent Trace</span>
@@ -285,64 +344,61 @@ class SuperBizAgentApp {
                 <div class="trace-list"></div>
             `;
             messageElement.appendChild(panel);
-            const toggle = panel.querySelector('.trace-toggle');
-            const list = panel.querySelector('.trace-list');
-            toggle?.addEventListener('click', () => list?.classList.toggle('expanded'));
+            const toggle = panel.querySelector(".trace-toggle");
+            const list = panel.querySelector(".trace-list");
+            toggle?.addEventListener("click", () => list?.classList.toggle("expanded"));
         }
 
-        panel.querySelector('.trace-count').textContent = `${traceEntries.length}`;
-        const list = panel.querySelector('.trace-list');
-        list.innerHTML = '';
+        panel.querySelector(".trace-count").textContent = `${traceEntries.length}`;
+        const list = panel.querySelector(".trace-list");
+        list.innerHTML = "";
 
         traceEntries.forEach((trace) => {
-            const item = document.createElement('div');
-            item.className = `trace-item status-${trace.status || 'success'}`;
-            const meta = [trace.node, trace.tool_name, trace.duration_ms ? `${trace.duration_ms}ms` : '']
+            const item = document.createElement("div");
+            item.className = `trace-item status-${trace.status || "success"}`;
+            const meta = [trace.node, trace.tool_name, trace.duration_ms ? `${trace.duration_ms}ms` : ""]
                 .filter(Boolean)
-                .join(' | ');
+                .join(" | ");
             item.innerHTML = `
-                <div class="trace-item-title">${this.escapeHtml(trace.title || 'Trace event')}</div>
+                <div class="trace-item-title">${this.escapeHtml(trace.title || "Trace event")}</div>
                 <div class="trace-item-meta">${this.escapeHtml(meta)}</div>
-                <div class="trace-item-summary">${this.escapeHtml(trace.result_summary || '')}</div>
+                <div class="trace-item-summary">${this.escapeHtml(trace.result_summary || "")}</div>
             `;
             list.appendChild(item);
         });
     }
 
-    updateAIOpsStreamContent(messageElement, content) {
+    updateAssistantMessage(messageElement, content, { markdown = false } = {}) {
         if (!messageElement) return;
-        messageElement.classList.add('aiops-message');
-        const contentNode = messageElement.querySelector('.message-content');
-        if (contentNode) {
-            contentNode.classList.remove('loading-message-content');
+        const contentNode = messageElement.querySelector(".message-content");
+        if (!contentNode) return;
+
+        contentNode.classList.remove("loading-message-content");
+        if (markdown) {
+            contentNode.innerHTML = this.renderMarkdown(content);
+            this.highlightCodeBlocks(contentNode);
+        } else {
             contentNode.textContent = content;
         }
-        this.renderTraceTimeline(messageElement, this.currentAIOpsTrace);
         this.scrollToBottom();
     }
 
     updateAIOpsMessage(messageElement, response, traceEntries = [], persist = true) {
-        const target = messageElement || this.addMessage('assistant', response, false, false);
-        target.classList.add('aiops-message');
-        const contentNode = target.querySelector('.message-content');
-        if (contentNode) {
-            contentNode.classList.remove('loading-message-content');
-            contentNode.innerHTML = this.renderMarkdown(response);
-            this.highlightCodeBlocks(contentNode);
-        }
+        const target = messageElement || this.addMessage("assistant", response, false, false);
+        target.classList.add("aiops-message");
+        this.updateAssistantMessage(target, response, { markdown: true });
         this.renderTraceTimeline(target, traceEntries);
-        this.scrollToBottom();
 
         if (persist) {
             const payload = {
-                type: 'assistant',
+                type: "assistant",
                 content: response,
-                meta: 'aiops-final',
+                meta: "aiops-final",
                 sessionId: this.sessionId,
                 timestamp: new Date().toISOString(),
             };
             const existingIndex = this.currentChatHistory.findIndex(
-                (entry) => entry.type === 'assistant' && entry.meta === 'aiops-final' && entry.sessionId === this.sessionId,
+                (entry) => entry.type === "assistant" && entry.meta === "aiops-final" && entry.sessionId === this.sessionId,
             );
             if (existingIndex >= 0) this.currentChatHistory[existingIndex] = payload;
             else this.currentChatHistory.push(payload);
@@ -352,31 +408,18 @@ class SuperBizAgentApp {
         return target;
     }
 
-    handleStreamComplete(messageElement, fullResponse) {
-        if (!messageElement) return;
-        messageElement.classList.remove('streaming');
-        const contentNode = messageElement.querySelector('.message-content');
-        if (contentNode) {
-            contentNode.innerHTML = this.renderMarkdown(fullResponse);
-            this.highlightCodeBlocks(contentNode);
-        }
-        this.currentChatHistory.push({ type: 'assistant', content: fullResponse, timestamp: new Date().toISOString() });
-        this.saveCurrentChat();
-        this.renderChatHistory();
-    }
-
     async sendQuickMessage(message) {
-        const loading = this.addLoadingMessage('正在生成回复...');
+        const loading = this.addLoadingMessage("正在生成回复...");
         try {
             const response = await fetch(`${this.apiBaseUrl}/chat`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ Id: this.sessionId, Question: message }),
             });
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             loading.remove();
-            this.addMessage('assistant', data.data?.answer || data.data?.errorMessage || '暂未返回结果');
+            this.addMessage("assistant", data.data?.answer || data.data?.errorMessage || "暂未返回结果");
         } catch (error) {
             loading.remove();
             throw error;
@@ -384,50 +427,63 @@ class SuperBizAgentApp {
     }
 
     async sendStreamMessage(message) {
-        const assistant = this.addLoadingMessage('');
-        assistant.classList.add('streaming');
-        const contentNode = assistant.querySelector('.message-content');
-        let fullResponse = '';
+        const assistant = this.addLoadingMessage("正在生成回复...");
+        let fullResponse = "";
 
         const response = await fetch(`${this.apiBaseUrl}/chat_stream`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ Id: this.sessionId, Question: message }),
         });
         if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
         const reader = response.body.getReader();
-        const decoder = new TextDecoder('utf-8');
-        let buffer = '';
+        const decoder = new TextDecoder("utf-8");
+        let buffer = "";
 
         try {
             while (true) {
                 const { done, value } = await reader.read();
                 if (done) {
-                    this.handleStreamComplete(assistant, fullResponse);
+                    this.updateAssistantMessage(assistant, fullResponse, { markdown: true });
+                    this.currentChatHistory.push({
+                        type: "assistant",
+                        content: fullResponse,
+                        timestamp: new Date().toISOString(),
+                    });
+                    this.saveCurrentChat();
+                    this.renderChatHistory();
                     return;
                 }
+
                 buffer += decoder.decode(value, { stream: true });
-                const lines = buffer.split('\n');
-                buffer = lines.pop() || '';
+                const lines = buffer.split("\n");
+                buffer = lines.pop() || "";
+
                 for (const line of lines) {
-                    if (!line.startsWith('data:')) continue;
+                    if (!line.startsWith("data:")) continue;
                     const raw = line.slice(5).trim();
                     try {
                         const payload = JSON.parse(raw);
-                        if (payload.type === 'content') fullResponse += payload.data || '';
-                        else if (payload.type === 'done') {
-                            this.handleStreamComplete(assistant, fullResponse);
+                        if (payload.type === "content") {
+                            fullResponse += payload.data || "";
+                        } else if (payload.type === "done") {
+                            this.updateAssistantMessage(assistant, fullResponse, { markdown: true });
+                            this.currentChatHistory.push({
+                                type: "assistant",
+                                content: fullResponse,
+                                timestamp: new Date().toISOString(),
+                            });
+                            this.saveCurrentChat();
+                            this.renderChatHistory();
                             return;
-                        } else if (payload.type === 'error') {
-                            throw new Error(payload.data || '流式对话失败');
+                        } else if (payload.type === "error") {
+                            throw new Error(payload.data || "流式对话失败");
                         }
                     } catch (_error) {
                         fullResponse += raw;
                     }
-                    contentNode.innerHTML = this.renderMarkdown(fullResponse);
-                    this.highlightCodeBlocks(contentNode);
-                    this.scrollToBottom();
+                    this.updateAssistantMessage(assistant, fullResponse, { markdown: true });
                 }
             }
         } finally {
@@ -438,24 +494,24 @@ class SuperBizAgentApp {
     async sendMessage() {
         const message = this.messageInput?.value?.trim();
         if (!message) {
-            this.showNotification('请输入消息内容', 'warning');
+            this.showNotification("请输入消息内容", "warning");
             return;
         }
         if (this.isStreaming) {
-            this.showNotification('当前任务正在执行中', 'warning');
+            this.showNotification("当前任务正在执行中", "warning");
             return;
         }
 
-        this.addMessage('user', message);
-        this.messageInput.value = '';
+        this.addMessage("user", message);
+        this.messageInput.value = "";
         this.isStreaming = true;
         this.updateUI();
 
         try {
-            if (this.currentMode === 'stream') await this.sendStreamMessage(message);
+            if (this.currentMode === "stream") await this.sendStreamMessage(message);
             else await this.sendQuickMessage(message);
         } catch (error) {
-            this.showNotification(`发送失败: ${error.message}`, 'error');
+            this.showNotification(`发送失败: ${error.message}`, "error");
         } finally {
             this.isStreaming = false;
             this.updateUI();
@@ -465,14 +521,14 @@ class SuperBizAgentApp {
     }
 
     validateFileType(file) {
-        if (!file) return { valid: false, message: '未选择文件' };
-        const extension = file.name.split('.').pop()?.toLowerCase() || '';
-        const allowedExtensions = ['txt', 'md', 'markdown'];
-        if (!allowedExtensions.includes(extension)) {
-            return { valid: false, message: `仅支持 ${allowedExtensions.join(', ')} 文件` };
+        if (!file) return { valid: false, message: "未选择文件" };
+        const extension = file.name.split(".").pop()?.toLowerCase() || "";
+        const allowed = ["txt", "md", "markdown"];
+        if (!allowed.includes(extension)) {
+            return { valid: false, message: `仅支持 ${allowed.join(", ")} 文件` };
         }
         if (file.size > 10 * 1024 * 1024) {
-            return { valid: false, message: '文件大小不能超过 10MB' };
+            return { valid: false, message: "文件大小不能超过 10MB" };
         }
         return { valid: true };
     }
@@ -482,20 +538,20 @@ class SuperBizAgentApp {
         if (!file) return;
         const validation = this.validateFileType(file);
         if (!validation.valid) {
-            this.showNotification(validation.message, 'warning');
-            event.target.value = '';
+            this.showNotification(validation.message, "warning");
+            event.target.value = "";
             return;
         }
         await this.uploadFile(file);
-        event.target.value = '';
+        event.target.value = "";
     }
 
     async uploadFile(file) {
         this.showUploadOverlay(true);
         try {
             const formData = new FormData();
-            formData.append('file', file);
-            const response = await fetch('/api/upload', { method: 'POST', body: formData });
+            formData.append("file", file);
+            const response = await fetch("/api/upload", { method: "POST", body: formData });
             const data = await response.json();
             if (!response.ok || data.code !== 200) {
                 throw new Error(data.detail || data.message || `HTTP ${response.status}`);
@@ -504,11 +560,11 @@ class SuperBizAgentApp {
             const indexed = data.data?.indexed !== false;
             const message = indexed
                 ? `文件 \`${file.name}\` 已上传并完成索引。`
-                : `文件 \`${file.name}\` 已上传，但索引失败：${data.data?.index_error || '未知原因'}`;
-            this.addMessage('assistant', message);
-            this.showNotification(indexed ? '文件上传成功' : '文件已上传，索引待处理', indexed ? 'success' : 'warning');
+                : `文件 \`${file.name}\` 已上传，但索引失败：${data.data?.index_error || "未知原因"}`;
+            this.addMessage("assistant", message);
+            this.showNotification(indexed ? "文件上传成功" : "文件已上传，索引待处理", indexed ? "success" : "warning");
         } catch (error) {
-            this.showNotification(`上传失败: ${error.message}`, 'error');
+            this.showNotification(`上传失败: ${error.message}`, "error");
         } finally {
             this.showUploadOverlay(false);
         }
@@ -517,7 +573,7 @@ class SuperBizAgentApp {
     async loadSkillDrafts() {
         if (!this.skillDraftList) return;
         try {
-            const response = await fetch('/api/agent/skill-drafts');
+            const response = await fetch("/api/agent/skill-drafts");
             const data = await response.json();
             this.skillDrafts = Array.isArray(data.data) ? data.data : [];
         } catch (_error) {
@@ -528,27 +584,28 @@ class SuperBizAgentApp {
 
     renderSkillDrafts() {
         if (!this.skillDraftList) return;
-        this.skillDraftList.innerHTML = '';
+        this.skillDraftList.innerHTML = "";
+
         if (this.skillDrafts.length === 0) {
-            const empty = document.createElement('div');
-            empty.className = 'history-item-title';
-            empty.textContent = '暂无 Skill 草稿';
+            const empty = document.createElement("div");
+            empty.className = "history-item-title";
+            empty.textContent = "暂无 Skill 草稿";
             this.skillDraftList.appendChild(empty);
             return;
         }
 
         this.skillDrafts.forEach((draft) => {
-            const item = document.createElement('div');
-            item.className = 'skill-draft-item';
+            const item = document.createElement("div");
+            item.className = "skill-draft-item";
             item.innerHTML = `
                 <span class="skill-draft-item-title">${this.escapeHtml(draft.name)}</span>
                 <button class="skill-draft-action" data-action="view">查看</button>
                 <button class="skill-draft-action" data-action="enable">启用</button>
                 <button class="skill-draft-action" data-action="delete">删除</button>
             `;
-            item.querySelector('[data-action="view"]')?.addEventListener('click', () => this.openSkillDraftModal(draft));
-            item.querySelector('[data-action="enable"]')?.addEventListener('click', () => this.enableSkillDraft(draft.name));
-            item.querySelector('[data-action="delete"]')?.addEventListener('click', () => this.deleteSkillDraft(draft.name));
+            item.querySelector('[data-action="view"]')?.addEventListener("click", () => this.openSkillDraftModal(draft));
+            item.querySelector('[data-action="enable"]')?.addEventListener("click", () => this.enableSkillDraft(draft.name));
+            item.querySelector('[data-action="delete"]')?.addEventListener("click", () => this.deleteSkillDraft(draft.name));
             this.skillDraftList.appendChild(item);
         });
     }
@@ -556,70 +613,74 @@ class SuperBizAgentApp {
     openSkillDraftModal(draft) {
         if (!this.skillDraftModal) return;
         this.skillDraftModalTitle.textContent = draft.name;
-        this.skillDraftModalContent.textContent = draft.content || '';
-        this.skillDraftModal.classList.remove('hidden');
+        this.skillDraftModalContent.textContent = draft.content || "";
+        this.skillDraftModal.classList.remove("hidden");
     }
 
     closeSkillDraftModal() {
-        this.skillDraftModal?.classList.add('hidden');
+        this.skillDraftModal?.classList.add("hidden");
     }
 
     async enableSkillDraft(draftName) {
         try {
-            const response = await fetch(`/api/agent/skill-drafts/${encodeURIComponent(draftName)}/enable`, { method: 'POST' });
+            const response = await fetch(`/api/agent/skill-drafts/${encodeURIComponent(draftName)}/enable`, {
+                method: "POST",
+            });
             const data = await response.json();
             if (!response.ok || data.code !== 200) {
                 throw new Error(data.detail || data.message || `HTTP ${response.status}`);
             }
-            this.showNotification(`已启用 Skill 草稿: ${draftName}`, 'success');
+            this.showNotification(`已启用 Skill 草稿: ${draftName}`, "success");
             await this.loadSkillDrafts();
         } catch (error) {
-            this.showNotification(`启用失败: ${error.message}`, 'error');
+            this.showNotification(`启用失败: ${error.message}`, "error");
         }
     }
 
     async deleteSkillDraft(draftName) {
         try {
-            const response = await fetch(`/api/agent/skill-drafts/${encodeURIComponent(draftName)}`, { method: 'DELETE' });
+            const response = await fetch(`/api/agent/skill-drafts/${encodeURIComponent(draftName)}`, {
+                method: "DELETE",
+            });
             const data = await response.json();
             if (!response.ok || data.code !== 200) {
                 throw new Error(data.detail || data.message || `HTTP ${response.status}`);
             }
-            this.showNotification(`已删除 Skill 草稿: ${draftName}`, 'success');
+            this.showNotification(`已删除 Skill 草稿: ${draftName}`, "success");
             await this.loadSkillDrafts();
             this.closeSkillDraftModal();
         } catch (error) {
-            this.showNotification(`删除失败: ${error.message}`, 'error');
+            this.showNotification(`删除失败: ${error.message}`, "error");
         }
     }
 
     openApprovalModal(payload) {
         this.pendingApproval = payload;
         if (!this.approvalModal) return;
-        this.approvalReason.textContent = payload.reason || '该工具调用需要人工审批。';
-        this.approvalToolName.textContent = payload.tool_name || '-';
-        this.approvalToolArgs.textContent = payload.tool_args_summary || '-';
-        this.approvalModal.classList.remove('hidden');
+        this.approvalReason.textContent = payload.reason || "该工具调用需要人工审批。";
+        this.approvalToolName.textContent = payload.tool_name || "-";
+        this.approvalToolArgs.textContent = payload.tool_args_summary || "-";
+        this.approvalModal.classList.remove("hidden");
     }
 
     closeApprovalModal() {
-        this.approvalModal?.classList.add('hidden');
+        this.approvalModal?.classList.add("hidden");
     }
 
     async handleApprovalDecision(approved) {
         if (!this.pendingApproval) return;
-        const endpoint = approved ? '/api/agent/approve' : '/api/agent/reject';
+        const endpoint = approved ? "/api/agent/approve" : "/api/agent/reject";
         const payload = {
             session_id: this.sessionId,
             action_id: this.pendingApproval.action_id,
-            operator: 'frontend-user',
-            comment: approved ? 'approved from web ui' : 'rejected from web ui',
+            operator: "frontend-user",
+            comment: approved ? "approved from web ui" : "rejected from web ui",
         };
 
         try {
             const response = await fetch(endpoint, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify(payload),
             });
             const data = await response.json();
@@ -628,112 +689,141 @@ class SuperBizAgentApp {
             }
             this.closeApprovalModal();
             this.pendingApproval = null;
-            this.showNotification(approved ? '已批准执行，继续诊断' : '已拒绝执行，重新规划中', 'success');
+            this.showNotification(approved ? "已批准执行，继续诊断" : "已拒绝执行，重新规划中", "success");
             await this.sendAIOpsRequest(true);
         } catch (error) {
-            this.showNotification(`审批操作失败: ${error.message}`, 'error');
+            this.showNotification(`审批操作失败: ${error.message}`, "error");
         }
     }
 
     async sendAIOpsRequest(resume = false) {
         if (this.isStreaming) {
-            this.showNotification('当前已有任务在执行中', 'warning');
+            this.showNotification("当前已有任务在执行中", "warning");
             return;
         }
 
         this.isStreaming = true;
         if (!resume) {
             this.currentAIOpsTrace = [];
-            this.currentAIOpsMessage = this.addLoadingMessage('AIOps Agent 正在分析当前会话...');
-            this.currentAIOpsMessage.classList.add('streaming', 'aiops-message');
+            this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
+            this.currentAIOpsMessage.classList.add("aiops-message");
         } else if (this.currentAIOpsMessage) {
-            this.updateAIOpsStreamContent(this.currentAIOpsMessage, '审批已处理，正在继续执行...');
+            this.updateAssistantMessage(this.currentAIOpsMessage, "审批已处理，正在继续执行...");
+        } else {
+            this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在继续执行...");
+            this.currentAIOpsMessage.classList.add("aiops-message");
         }
-        this.updateUI();
 
-        let reportContent = '';
+        this.updateUI();
+        let reportContent = "";
+
         try {
-            const response = await fetch('/api/aiops', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+            const response = await fetch("/api/aiops", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ session_id: this.sessionId }),
             });
-            if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
+
+            if (!response.ok || !response.body) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
             const reader = response.body.getReader();
-            const decoder = new TextDecoder('utf-8');
-            let buffer = '';
+            const decoder = new TextDecoder("utf-8");
+            let buffer = "";
 
             try {
                 while (true) {
                     const { done, value } = await reader.read();
                     if (done) break;
+
                     buffer += decoder.decode(value, { stream: true });
-                    const chunks = buffer.split('\n\n');
-                    buffer = chunks.pop() || '';
+                    const chunks = buffer.split("\n\n");
+                    buffer = chunks.pop() || "";
 
                     for (const chunk of chunks) {
-                        const dataLine = chunk.split('\n').find((line) => line.startsWith('data:'));
+                        const dataLine = chunk
+                            .split("\n")
+                            .find((line) => line.startsWith("data:"));
                         if (!dataLine) continue;
+
                         const payload = JSON.parse(dataLine.slice(5).trim());
 
-                        if (payload.type === 'trace' && payload.trace) {
+                        if (payload.type === "trace" && payload.trace) {
                             this.currentAIOpsTrace.push(payload.trace);
                             this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             continue;
                         }
-                        if (payload.type === 'status') {
-                            this.updateAIOpsStreamContent(
+
+                        if (payload.type === "status") {
+                            this.updateAssistantMessage(
                                 this.currentAIOpsMessage,
-                                `${payload.message || '正在分析...'}\n\n已记录 ${this.currentAIOpsTrace.length} 条 Trace。`,
+                                `${payload.message || "正在分析..."}\n\n当前 Trace 数：${this.currentAIOpsTrace.length}`,
                             );
+                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             continue;
                         }
-                        if (payload.type === 'plan') {
+
+                        if (payload.type === "plan") {
                             const planText = Array.isArray(payload.plan)
-                                ? payload.plan.map((step, index) => `${index + 1}. ${step}`).join('\n')
-                                : '暂无计划';
-                            this.updateAIOpsStreamContent(this.currentAIOpsMessage, `## 诊断计划\n\n${planText}`);
+                                ? payload.plan.map((step, index) => `${index + 1}. ${step}`).join("\n")
+                                : "暂无计划";
+                            this.updateAssistantMessage(this.currentAIOpsMessage, `## 诊断计划\n\n${planText}`, {
+                                markdown: true,
+                            });
+                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             continue;
                         }
-                        if (payload.type === 'step_complete') {
-                            this.updateAIOpsStreamContent(
+
+                        if (payload.type === "step_complete") {
+                            this.updateAssistantMessage(
                                 this.currentAIOpsMessage,
-                                `## 执行中\n\n当前步骤：${payload.current_step || '执行步骤'}\n\n结果摘要：${payload.result_preview || ''}`,
+                                `## 执行中\n\n当前步骤：${payload.current_step || "执行步骤"}\n\n结果摘要：${payload.result_preview || ""}`,
+                                { markdown: true },
                             );
+                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             continue;
                         }
-                        if (payload.type === 'verifier_result') {
+
+                        if (payload.type === "verifier_result") {
                             const findings = Array.isArray(payload.findings)
-                                ? payload.findings.map((item) => `- ${item}`).join('\n')
-                                : '';
+                                ? payload.findings.map((item) => `- ${item}`).join("\n")
+                                : "";
                             const verifierText = payload.passed
-                                ? 'Verifier 已通过，正在生成最终报告。'
+                                ? "Verifier 已通过，正在生成最终报告。"
                                 : `Verifier 未通过，正在补充证据。\n\n${findings}`;
-                            this.updateAIOpsStreamContent(this.currentAIOpsMessage, verifierText);
+                            this.updateAssistantMessage(this.currentAIOpsMessage, verifierText, { markdown: true });
+                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             continue;
                         }
-                        if (payload.type === 'approval_required') {
-                            this.updateAIOpsStreamContent(
+
+                        if (payload.type === "approval_required") {
+                            this.updateAssistantMessage(
                                 this.currentAIOpsMessage,
-                                `## 等待审批\n\n工具：${payload.tool_name || '-'}\n\n原因：${payload.reason || ''}`,
+                                `## 等待审批\n\n工具：${payload.tool_name || "-"}\n\n原因：${payload.reason || ""}`,
+                                { markdown: true },
                             );
+                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
                             this.openApprovalModal(payload);
                             return;
                         }
-                        if (payload.type === 'report') {
+
+                        if (payload.type === "report") {
                             reportContent = payload.report || reportContent;
                             this.updateAIOpsMessage(this.currentAIOpsMessage, reportContent, this.currentAIOpsTrace, false);
                             continue;
                         }
-                        if (payload.type === 'complete') {
-                            const finalReport = payload.diagnosis?.report || payload.response || reportContent || '诊断已完成。';
+
+                        if (payload.type === "complete") {
+                            const finalReport =
+                                payload.diagnosis?.report || payload.response || reportContent || "诊断已完成。";
                             this.updateAIOpsMessage(this.currentAIOpsMessage, finalReport, this.currentAIOpsTrace, true);
-                            this.showNotification('AIOps 诊断完成', 'success');
+                            this.showNotification("AIOps 诊断完成", "success");
                             return;
                         }
-                        if (payload.type === 'error') {
-                            throw new Error(payload.message || 'AIOps 诊断失败');
+
+                        if (payload.type === "error") {
+                            throw new Error(payload.message || "AIOps 诊断失败");
                         }
                     }
                 }
@@ -741,15 +831,13 @@ class SuperBizAgentApp {
                 reader.releaseLock();
             }
         } catch (error) {
-            if (this.currentAIOpsMessage) {
-                this.updateAIOpsMessage(
-                    this.currentAIOpsMessage,
-                    `## 诊断失败\n\n${error.message}`,
-                    this.currentAIOpsTrace,
-                    false,
-                );
-            }
-            this.showNotification(`AIOps 执行失败: ${error.message}`, 'error');
+            this.updateAIOpsMessage(
+                this.currentAIOpsMessage,
+                `## 诊断失败\n\n${error.message}`,
+                this.currentAIOpsTrace,
+                false,
+            );
+            this.showNotification(`AIOps 执行失败: ${error.message}`, "error");
         } finally {
             this.isStreaming = false;
             this.updateUI();
@@ -758,18 +846,19 @@ class SuperBizAgentApp {
 
     async triggerAIOps() {
         if (this.isStreaming) {
-            this.showNotification('请等待当前任务结束后再发起新的诊断', 'warning');
+            this.showNotification("请等待当前任务结束后再发起新的诊断", "warning");
             return;
         }
-        this.addMessage('user', '请开始一次 AIOps 诊断，并保留完整 Agent Trace。');
+
+        this.addMessage("user", "请开始一次 AIOps 诊断，并保留完整 Agent Trace。");
         await this.sendAIOpsRequest(false);
     }
 
-    showLoadingOverlay(visible, title = '', subtitle = '') {
+    showLoadingOverlay(visible, title = "", subtitle = "") {
         if (!this.loadingOverlay) return;
-        this.loadingOverlay.style.display = visible ? 'flex' : 'none';
-        const titleNode = this.loadingOverlay.querySelector('.loading-text');
-        const subtitleNode = this.loadingOverlay.querySelector('.loading-subtext');
+        this.loadingOverlay.style.display = visible ? "flex" : "none";
+        const titleNode = this.loadingOverlay.querySelector(".loading-text");
+        const subtitleNode = this.loadingOverlay.querySelector(".loading-subtext");
         if (titleNode && title) titleNode.textContent = title;
         if (subtitleNode && subtitle) subtitleNode.textContent = subtitle;
     }
@@ -777,13 +866,13 @@ class SuperBizAgentApp {
     showUploadOverlay(visible) {
         this.showLoadingOverlay(
             visible,
-            visible ? '正在上传并索引文件...' : '',
-            visible ? '系统会在上传完成后立即尝试写入知识库。' : '',
+            visible ? "正在上传并索引文件..." : "",
+            visible ? "系统会在上传完成后立即尝试写入知识库。" : "",
         );
     }
 }
 
-const slideStyle = document.createElement('style');
+const slideStyle = document.createElement("style");
 slideStyle.textContent = `
 @keyframes slideIn {
     from { opacity: 0; transform: translateY(6px); }
@@ -797,6 +886,6 @@ slideStyle.textContent = `
 `;
 document.head.appendChild(slideStyle);
 
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener("DOMContentLoaded", () => {
     new SuperBizAgentApp();
 });

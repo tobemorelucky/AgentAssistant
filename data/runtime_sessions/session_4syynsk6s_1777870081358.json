@@ -1,0 +1,37 @@
+{
+  "session_id": "session_4syynsk6s_1777870081358",
+  "status": "running",
+  "updated_at": "2026-05-07T03:15:07.956830+00:00",
+  "state": {
+    "session_id": "session_4syynsk6s_1777870081358",
+    "input": "诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：\n            ```\n            # 告警分析报告\n\n            ## 活跃告警清单\n            - 告警名称、级别、目标服务、时间窗口、状态\n\n            ## 执行轨迹摘要\n            - 规划步骤\n            - 工具调用摘要\n            - 审批与策略阻断情况\n\n            ## 根因分析\n            - 症状描述\n            - 根因结论\n\n            ## 关键证据\n            - 指标证据\n            - 日志证据\n            - 历史案例证据\n\n            ## 影响范围\n            - 受影响服务\n            - 时间范围\n            - 风险范围\n\n            ## 风险提示\n            - 高风险建议与注意事项\n\n            ## 处理建议\n            - 处理步骤\n            - 后续建议\n            ```\n\n            重要提醒：\n            - 最终输出必须是纯 Markdown 文本，不要包含 JSON 结构\n            - 所有内容必须基于工具查询的真实数据，严禁编造\n            - 如果某个步骤失败，在结论中如实说明，不要跳过",
+    "entry_node": "skill_router",
+    "status": "running",
+    "plan": [],
+    "past_steps": [],
+    "response": "",
+    "matched_skills": [],
+    "similar_incidents": [],
+    "trace_events": [
+      {
+        "trace_id": "1534c6a8-1f0b-44c7-8391-bb3c6f4463bd",
+        "session_id": "session_4syynsk6s_1777870081358",
+        "node": "skill_router",
+        "status": "success",
+        "title": "Matched 0 skills",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "No skills matched",
+        "started_at": "2026-05-07T03:15:07.956273+00:00",
+        "ended_at": "2026-05-07T03:15:07.956273+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "matched_skills": []
+        }
+      }
+    ],
+    "tools_used": [],
+    "verifier_result": {},
+    "pending_action": null
+  }
+}

@@ -17,6 +17,8 @@
 - 修复 Skill Draft 生成在 `matched_skills` 为空时的越界问题。
 - 为 Skill Router、Tool Policy、Runtime Store 增加轻量级测试样例。
 - 已执行语法检查：`python -m py_compile ...`、`node --check static/app.js`。
+- 更新 `README.md`，补充中文的新能力说明、审批接口、Skill Draft 接口、Agent Trace 与上传响应增强说明。
+- 修复前端 `AI Ops` 触发链路，重建 `static/app.js` 的消息渲染、空态切换、SSE 处理与审批续跑逻辑，并为 `/api/aiops` 增加首个初始化状态事件。
 
 ## 风险与说明
 - 当前未补完整端到端联调；审批续跑、Verifier 触发和评估脚本仍建议在具备完整模型/MCP/向量依赖的环境里再跑一轮真实链路。

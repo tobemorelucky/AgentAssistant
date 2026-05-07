@@ -6,6 +6,27 @@
 [![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
 [![LangChain](https://img.shields.io/badge/LangChain-latest-orange.svg)](https://www.langchain.com/)
 
+## 新增能力说明
+
+当前 AIOps 能力已经升级为基于 `LangGraph + MCP` 的可治理 Agent 平台，并保持现有 `POST /api/aiops` 流式接口兼容。
+
+本次新增的核心能力：
+
+- 通过 `AGENT.md` 管理项目级 Agent 角色、诊断原则、工具规范和安全边界
+- 通过 `skills/<skill>/SKILL.md` 注入 Runbook Skill，并由 Skill Router 按输入自动匹配
+- 通过 `tool_policy.yaml` 对工具分级：`read_only`、`low_risk`、`dangerous`、`blocked`
+- 对 `dangerous` 工具增加人工审批
+- 增加 Agent Trace，记录 planner、executor、tool_call、replanner、verifier、approval、memory 等执行过程
+- 增加 Verifier，对最终报告做证据自检
+- 增加 Incident Memory 和 Skill Draft 生成能力
+
+新增运行数据默认落盘到：
+
+- `data/agent_traces/<session_id>.jsonl`
+- `data/pending_actions/<session_id>.json`
+- `data/runtime_sessions/<session_id>.json`
+- `data/incident_memory/incidents.jsonl`
+
 ## ✨ 核心特性
 
 - 🤖 **智能对话** - LangChain 多轮对话 + 流式输出
@@ -159,6 +180,36 @@ curl -X POST "http://localhost:9900/api/aiops" \
   -d '{"session_id":"session-123"}' \
   --no-buffer
 ```
+
+## Agent 平台补充接口
+
+`/api/aiops` 仍然保持原有 SSE 事件兼容，在原有 `status`、`plan`、`step_complete`、`report`、`complete`、`error` 之外，新增：
+
+- `trace`：单条 Agent Trace 事件
+- `approval_required`：危险工具调用需要审批
+- `verifier_result`：Verifier 校验结果
+
+人工审批接口：
+
+| 功能 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 审批通过 | POST | `/api/agent/approve` | 批准危险工具调用，并继续当前会话 |
+| 审批拒绝 | POST | `/api/agent/reject` | 拒绝危险工具调用，并进入重新规划 |
+| 查询待审批动作 | GET | `/api/agent/pending-actions/{session_id}` | 查询当前会话的待审批动作 |
+
+Skill 草稿接口：
+
+| 功能 | 方法 | 路径 | 说明 |
+|------|------|------|------|
+| 查看草稿 | GET | `/api/agent/skill-drafts` | 查看自动生成的 Skill 草稿 |
+| 启用草稿 | POST | `/api/agent/skill-drafts/{draft_name}/enable` | 将草稿移动到 `skills/` |
+| 删除草稿 | DELETE | `/api/agent/skill-drafts/{draft_name}` | 删除草稿 |
+
+补充说明：
+
+- `POST /api/upload` 现在会返回 `indexed` 和 `index_error`，用于区分“上传成功”和“索引成功”
+- 当前 AIOps 工作流为 `Skill Router -> Planner -> Executor -> Replanner -> Verifier`
+- 前端已增加 Agent Trace 时间线、危险工具审批弹窗和 Skill 草稿面板
 
 ## 📁 项目结构
 

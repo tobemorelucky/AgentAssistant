@@ -78,7 +78,8 @@ class SuperBizAgentApp {
         });
 
         this.modeDropdown?.querySelectorAll(".dropdown-item").forEach((item) => {
-            item.addEventListener("click", () => {
+            item.addEventListener("click", (event) => {
+                event.stopPropagation();
                 this.currentMode = item.dataset.mode || "quick";
                 this.updateUI();
                 this.closeMenus();
@@ -218,7 +219,7 @@ class SuperBizAgentApp {
     }
 
     setConversationState() {
-        const isEmpty = this.chatMessages?.children.length === 0;
+        const isEmpty = (this.chatMessages?.children.length || 0) === 0;
         this.chatContainer?.classList.toggle("centered", isEmpty);
     }
 
@@ -251,7 +252,6 @@ class SuperBizAgentApp {
     createMessageElement(type, content, isLoading = false) {
         const message = document.createElement("div");
         message.className = `message ${type}`;
-
         const body = document.createElement("div");
         body.className = `message-content ${isLoading ? "loading-message-content" : ""}`;
 
@@ -296,12 +296,41 @@ class SuperBizAgentApp {
         return this.addMessage("assistant", content, true, false);
     }
 
+    upsertAIOpsProgressMessage(content, traceEntries = []) {
+        const payload = {
+            type: "assistant",
+            content,
+            meta: "aiops-progress",
+            sessionId: this.sessionId,
+            traceEntries: [...traceEntries],
+            timestamp: new Date().toISOString(),
+        };
+        const existingIndex = this.currentChatHistory.findIndex(
+            (entry) => entry.type === "assistant" && entry.meta === "aiops-progress" && entry.sessionId === this.sessionId,
+        );
+        if (existingIndex >= 0) this.currentChatHistory[existingIndex] = payload;
+        else this.currentChatHistory.push(payload);
+        this.saveCurrentChat();
+        this.renderChatHistory();
+    }
+
     renderCurrentConversation() {
         if (!this.chatMessages) return;
         this.chatMessages.innerHTML = "";
+        this.currentAIOpsMessage = null;
+
         this.currentChatHistory.forEach((message) => {
-            this.addMessage(message.type, message.content, false, false, message);
+            const element = this.addMessage(message.type, message.content, false, false, message);
+            if (message.meta === "aiops-progress") {
+                element.classList.add("aiops-message");
+                this.currentAIOpsMessage = element;
+                this.renderTraceTimeline(element, message.traceEntries || []);
+            }
+            if (message.meta === "aiops-final") {
+                element.classList.add("aiops-message");
+            }
         });
+
         this.setConversationState();
     }
 
@@ -333,6 +362,11 @@ class SuperBizAgentApp {
         if (!messageElement) return;
 
         let panel = messageElement.querySelector(".trace-panel");
+        if (!traceEntries.length) {
+            if (panel) panel.remove();
+            return;
+        }
+
         if (!panel) {
             panel = document.createElement("div");
             panel.className = "trace-panel";
@@ -386,10 +420,14 @@ class SuperBizAgentApp {
     updateAIOpsMessage(messageElement, response, traceEntries = [], persist = true) {
         const target = messageElement || this.addMessage("assistant", response, false, false);
         target.classList.add("aiops-message");
+        this.currentAIOpsMessage = target;
         this.updateAssistantMessage(target, response, { markdown: true });
         this.renderTraceTimeline(target, traceEntries);
 
         if (persist) {
+            this.currentChatHistory = this.currentChatHistory.filter(
+                (entry) => !(entry.type === "assistant" && entry.meta === "aiops-progress" && entry.sessionId === this.sessionId),
+            );
             const payload = {
                 type: "assistant",
                 content: response,
@@ -494,7 +532,6 @@ class SuperBizAgentApp {
     async sendMessage() {
         const message = this.messageInput?.value?.trim();
         if (!message) {
-            this.showNotification("请输入消息内容", "warning");
             return;
         }
         if (this.isStreaming) {
@@ -702,16 +739,24 @@ class SuperBizAgentApp {
             return;
         }
 
+        const syncProgress = (content) => {
+            this.upsertAIOpsProgressMessage(content, this.currentAIOpsTrace);
+            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+        };
+
         this.isStreaming = true;
         if (!resume) {
             this.currentAIOpsTrace = [];
             this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
             this.currentAIOpsMessage.classList.add("aiops-message");
+            syncProgress("AIOps Agent 正在启动诊断...");
         } else if (this.currentAIOpsMessage) {
             this.updateAssistantMessage(this.currentAIOpsMessage, "审批已处理，正在继续执行...");
+            syncProgress("审批已处理，正在继续执行...");
         } else {
             this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在继续执行...");
             this.currentAIOpsMessage.classList.add("aiops-message");
+            syncProgress("AIOps Agent 正在继续执行...");
         }
 
         this.updateUI();
@@ -742,25 +787,24 @@ class SuperBizAgentApp {
                     buffer = chunks.pop() || "";
 
                     for (const chunk of chunks) {
-                        const dataLine = chunk
-                            .split("\n")
-                            .find((line) => line.startsWith("data:"));
+                        const dataLine = chunk.split("\n").find((line) => line.startsWith("data:"));
                         if (!dataLine) continue;
 
                         const payload = JSON.parse(dataLine.slice(5).trim());
 
                         if (payload.type === "trace" && payload.trace) {
                             this.currentAIOpsTrace.push(payload.trace);
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            const content =
+                                this.currentAIOpsMessage?.querySelector(".message-content")?.textContent ||
+                                "AIOps Agent 正在执行中...";
+                            syncProgress(content);
                             continue;
                         }
 
                         if (payload.type === "status") {
-                            this.updateAssistantMessage(
-                                this.currentAIOpsMessage,
-                                `${payload.message || "正在分析..."}\n\n当前 Trace 数：${this.currentAIOpsTrace.length}`,
-                            );
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            const content = `${payload.message || "正在分析..."}\n\n当前 Trace 数：${this.currentAIOpsTrace.length}`;
+                            this.updateAssistantMessage(this.currentAIOpsMessage, content);
+                            syncProgress(content);
                             continue;
                         }
 
@@ -768,20 +812,16 @@ class SuperBizAgentApp {
                             const planText = Array.isArray(payload.plan)
                                 ? payload.plan.map((step, index) => `${index + 1}. ${step}`).join("\n")
                                 : "暂无计划";
-                            this.updateAssistantMessage(this.currentAIOpsMessage, `## 诊断计划\n\n${planText}`, {
-                                markdown: true,
-                            });
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            const content = `## 诊断计划\n\n${planText}`;
+                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
+                            syncProgress(content);
                             continue;
                         }
 
                         if (payload.type === "step_complete") {
-                            this.updateAssistantMessage(
-                                this.currentAIOpsMessage,
-                                `## 执行中\n\n当前步骤：${payload.current_step || "执行步骤"}\n\n结果摘要：${payload.result_preview || ""}`,
-                                { markdown: true },
-                            );
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            const content = `## 执行中\n\n当前步骤：${payload.current_step || "执行步骤"}\n\n结果摘要：${payload.result_preview || ""}`;
+                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
+                            syncProgress(content);
                             continue;
                         }
 
@@ -789,21 +829,18 @@ class SuperBizAgentApp {
                             const findings = Array.isArray(payload.findings)
                                 ? payload.findings.map((item) => `- ${item}`).join("\n")
                                 : "";
-                            const verifierText = payload.passed
+                            const content = payload.passed
                                 ? "Verifier 已通过，正在生成最终报告。"
                                 : `Verifier 未通过，正在补充证据。\n\n${findings}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, verifierText, { markdown: true });
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
+                            syncProgress(content);
                             continue;
                         }
 
                         if (payload.type === "approval_required") {
-                            this.updateAssistantMessage(
-                                this.currentAIOpsMessage,
-                                `## 等待审批\n\n工具：${payload.tool_name || "-"}\n\n原因：${payload.reason || ""}`,
-                                { markdown: true },
-                            );
-                            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+                            const content = `## 等待审批\n\n工具：${payload.tool_name || "-"}\n\n原因：${payload.reason || ""}`;
+                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
+                            syncProgress(content);
                             this.openApprovalModal(payload);
                             return;
                         }
@@ -811,6 +848,7 @@ class SuperBizAgentApp {
                         if (payload.type === "report") {
                             reportContent = payload.report || reportContent;
                             this.updateAIOpsMessage(this.currentAIOpsMessage, reportContent, this.currentAIOpsTrace, false);
+                            syncProgress(reportContent);
                             continue;
                         }
 
@@ -831,12 +869,9 @@ class SuperBizAgentApp {
                 reader.releaseLock();
             }
         } catch (error) {
-            this.updateAIOpsMessage(
-                this.currentAIOpsMessage,
-                `## 诊断失败\n\n${error.message}`,
-                this.currentAIOpsTrace,
-                false,
-            );
+            const content = `## 诊断失败\n\n${error.message}`;
+            this.updateAIOpsMessage(this.currentAIOpsMessage, content, this.currentAIOpsTrace, false);
+            syncProgress(content);
             this.showNotification(`AIOps 执行失败: ${error.message}`, "error");
         } finally {
             this.isStreaming = false;

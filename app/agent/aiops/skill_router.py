@@ -13,15 +13,29 @@ from app.agent.aiops.trace import create_trace_event
 
 
 INTENT_PATTERNS = {
-    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "使用率高", "飙升"],
-    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "泄漏"],
-    "log_analysis": [r"\blog\b", "日志", "error", "异常"],
+    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "cpu过高", "CPU告警"],
+    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "OOM"],
+    "log_analysis": [r"\blog\b", "日志", "error", "异常日志"],
+    "disk_diagnosis": [
+        r"\bdisk\b",
+        "disk usage",
+        "disk full",
+        "high disk",
+        "no space left",
+        "storage",
+        "磁盘",
+        "硬盘",
+        "磁盘满",
+        "硬盘满",
+        "清理空间",
+        "清理缓存",
+    ],
 }
 
 
 def infer_intents(input_text: str) -> list[str]:
     """Infer coarse intents from the user task."""
-    normalized = input_text.lower()
+    normalized = (input_text or "").lower()
     matched: list[str] = []
     for intent, patterns in INTENT_PATTERNS.items():
         for pattern in patterns:
@@ -37,7 +51,7 @@ def _contains_any(normalized_text: str, candidates: list[str]) -> bool:
 
 def score_skill(input_text: str, skill: SkillDefinition) -> tuple[int, list[str]]:
     """Score a skill based on trigger match priority."""
-    normalized = input_text.lower()
+    normalized = (input_text or "").lower()
     trigger = skill.trigger or {}
     reasons: list[str] = []
     score = 0

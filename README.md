@@ -492,3 +492,10 @@ netstat -ano | findstr :8004  # Monitor MCP
 author： chief
 
 MIT License
+## AIOps 磁盘清理 Mock Skill
+
+- 当前内置了一个基于纯模拟数据的 `disk_cleanup` Skill，用于验证磁盘空间告警类诊断链路。
+- 当用户输入“服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议”这类问题时，Skill Router 会优先命中 `disk_cleanup`，Planner 会按固定顺序采集磁盘证据，而不是只返回通用知识库建议。
+- 磁盘现场数据来自 `mock_data/disk.json`，由 `mcp_servers/monitor_server.py` 中新增的只读工具提供，包括：`get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates`。
+- 这些工具全部是只读 mock 工具，不会执行 shell，也不会删除任何文件。
+- `aiops-docs/` 中的内容仍然只是上传到 RAG 的 runbook 文档，用于补充清理原则与风险提示，不代表实时日志或实时监控数据。

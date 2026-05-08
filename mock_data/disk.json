@@ -1,0 +1,102 @@
+{
+  "disk_usage": {
+    "host": "demo-server-01",
+    "mount": "/",
+    "usage_percent": 92.4,
+    "used_gb": 184.8,
+    "total_gb": 200,
+    "available_gb": 15.2
+  },
+  "large_directories": [
+    {
+      "path": "/var/log",
+      "size_gb": 48.2
+    },
+    {
+      "path": "/var/lib/docker",
+      "size_gb": 37.5
+    },
+    {
+      "path": "/tmp",
+      "size_gb": 12.1
+    },
+    {
+      "path": "/app/cache",
+      "size_gb": 8.6
+    }
+  ],
+  "large_files": [
+    {
+      "path": "/var/log/data-sync-service/app.log",
+      "size_gb": 18.6
+    },
+    {
+      "path": "/var/lib/docker/buildkit/cache.db",
+      "size_gb": 9.4
+    },
+    {
+      "path": "/var/log/data-sync-service/error.log",
+      "size_gb": 7.4
+    }
+  ],
+  "deleted_open_files": [
+    {
+      "process_name": "data-sync-service",
+      "pid": 12345,
+      "path": "/var/log/data-sync-service/old.log",
+      "state": "deleted",
+      "size_gb": 6.8
+    }
+  ],
+  "docker_usage": {
+    "images_gb": 4.2,
+    "containers_gb": 1.6,
+    "volumes_gb": 6.1,
+    "build_cache_gb": 9.4,
+    "total_gb": 21.3
+  },
+  "cleanup_candidates": {
+    "safe": [
+      {
+        "item": "清理 /tmp 历史临时文件",
+        "size_gb": 12.1,
+        "suggestion": "清理超过 7 天未访问的临时文件"
+      },
+      {
+        "item": "清理 Docker build cache",
+        "size_gb": 9.4,
+        "suggestion": "仅清理未被当前构建链路使用的 build cache"
+      }
+    ],
+    "need_approval": [
+      {
+        "item": "压缩或归档 /var/log/data-sync-service/app.log",
+        "size_gb": 18.6,
+        "suggestion": "确认日志保留策略后执行 logrotate 或归档"
+      },
+      {
+        "item": "清理未使用的 Docker volumes",
+        "size_gb": 6.1,
+        "suggestion": "确认 volume 不被在线业务依赖后再清理"
+      }
+    ],
+    "forbidden": [
+      {
+        "item": "rm -rf /var/lib/mysql",
+        "reason": "数据库目录，禁止自动清理"
+      },
+      {
+        "item": "docker system prune --volumes",
+        "reason": "会删除卷数据，必须人工评估"
+      },
+      {
+        "item": "删除业务 uploads 目录",
+        "reason": "可能直接删除业务数据"
+      },
+      {
+        "item": "删除 Milvus/MinIO/etcd volumes",
+        "reason": "属于平台持久化数据，禁止自动清理"
+      }
+    ]
+  }
+}

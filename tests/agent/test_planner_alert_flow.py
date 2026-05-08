@@ -1,4 +1,5 @@
 from app.agent.aiops.planner import (
+    build_disk_cleanup_plan,
     build_default_alert_plan,
     choose_highest_severity_alert,
     should_fetch_active_alerts,
@@ -42,3 +43,16 @@ def test_default_plan_anchors_on_selected_alert():
     assert "get_service_info" in plan[0]
     assert "data-sync-service" in "\n".join(plan)
     assert "HighCPUUsage" in "\n".join(plan)
+
+
+def test_disk_cleanup_plan_prioritizes_disk_tools():
+    plan = build_disk_cleanup_plan()
+
+    assert len(plan) == 7
+    assert "get_disk_usage" in plan[0]
+    assert "list_large_directories" in plan[1]
+    assert "list_large_files" in plan[2]
+    assert "query_deleted_open_files" in plan[3]
+    assert "query_docker_disk_usage" in plan[4]
+    assert "get_disk_cleanup_candidates" in plan[5]
+    assert "retrieve_knowledge" in plan[6]

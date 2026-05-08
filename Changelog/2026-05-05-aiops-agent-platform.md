@@ -34,3 +34,6 @@
 ## 风险与说明
 - 当前未补完整端到端联调；审批续跑、Verifier 触发和评估脚本仍建议在具备完整模型/MCP/向量依赖的环境里再跑一轮真实链路。
 - 仓库内仍存在部分历史中文注释编码噪音，本次优先保证新增治理链路和前端交互可维护。
+- 新增基于纯模拟数据的 `disk_cleanup` AIOps Skill 测试链路：补充 `mock_data/disk.json`、`skills/disk_cleanup/SKILL.md`、`mcp_servers/monitor_server.py` 中的只读磁盘诊断工具，以及 `tool_policy.yaml` 的磁盘工具 `read_only` 分级。
+- 为磁盘诊断引入确定性的 Planner / Executor / Replanner 逻辑：命中 `disk_cleanup` 后会按固定顺序采集 `get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates` 和 `retrieve_knowledge`，最终生成包含具体数值、风险提示和禁止自动清理项的证据型报告。
+- 新增轻量测试覆盖磁盘链路：Skill Router 命中 `disk_diagnosis`、磁盘诊断计划顺序、以及最终报告中关键数值与安全段落的断言。

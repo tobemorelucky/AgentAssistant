@@ -29,6 +29,18 @@ tools:
     level: read_only
   list_all_services:
     level: read_only
+  get_disk_usage:
+    level: read_only
+  list_large_directories:
+    level: read_only
+  list_large_files:
+    level: read_only
+  query_deleted_open_files:
+    level: read_only
+  query_docker_disk_usage:
+    level: read_only
+  get_disk_cleanup_candidates:
+    level: read_only
   analyze_log_pattern:
     level: low_risk
   search_service_logs:

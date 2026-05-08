@@ -14,6 +14,7 @@ import functools
 import json
 import os
 import random
+from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastmcp import FastMCP
@@ -26,6 +27,8 @@ logging.basicConfig(
 logger = logging.getLogger("Monitor_MCP_Server")
 
 mcp = FastMCP("Monitor")
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DISK_MOCK_PATH = ROOT_DIR / "mock_data" / "disk.json"
 
 
 def log_tool_call(func):
@@ -159,6 +162,12 @@ def _load_mock_active_alerts(include_resolved: bool = False) -> list[dict[str, A
             }
         )
     return alerts
+
+
+def _load_disk_mock_data() -> dict[str, Any]:
+    """Load mock disk diagnostic data from disk.json."""
+    with DISK_MOCK_PATH.open("r", encoding="utf-8") as fh:
+        return json.load(fh)
 
 
 
@@ -591,6 +600,75 @@ def list_all_services() -> Dict[str, Any]:
     }
 
 
+
+
+@mcp.tool()
+@log_tool_call
+def get_disk_usage(hostname: Optional[str] = None, mount: str = "/") -> Dict[str, Any]:
+    """Return mock disk usage for a host and mount point."""
+    payload = _load_disk_mock_data()
+    disk_usage = dict(payload.get("disk_usage", {}))
+    if hostname:
+        disk_usage["host"] = hostname
+    disk_usage["mount"] = mount or disk_usage.get("mount", "/")
+    return disk_usage
+
+
+@mcp.tool()
+@log_tool_call
+def list_large_directories(path: str = "/", limit: int = 10) -> Dict[str, Any]:
+    """Return the top large directories from mock data."""
+    payload = _load_disk_mock_data()
+    directories = list(payload.get("large_directories", []) or [])[:limit]
+    return {
+        "path": path,
+        "limit": limit,
+        "directories": directories,
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def list_large_files(path: str = "/", min_size_mb: int = 100, limit: int = 20) -> Dict[str, Any]:
+    """Return mock large files above a size threshold."""
+    payload = _load_disk_mock_data()
+    files = list(payload.get("large_files", []) or [])
+    min_size_gb = round(min_size_mb / 1024, 3)
+    filtered = [item for item in files if float(item.get("size_gb", 0)) >= min_size_gb]
+    return {
+        "path": path,
+        "min_size_mb": min_size_mb,
+        "limit": limit,
+        "files": filtered[:limit],
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def query_deleted_open_files() -> Dict[str, Any]:
+    """Return deleted-but-still-open files from mock data."""
+    payload = _load_disk_mock_data()
+    files = list(payload.get("deleted_open_files", []) or [])
+    return {
+        "files": files,
+        "total": len(files),
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def query_docker_disk_usage() -> Dict[str, Any]:
+    """Return Docker disk usage from mock data."""
+    payload = _load_disk_mock_data()
+    return dict(payload.get("docker_usage", {}))
+
+
+@mcp.tool()
+@log_tool_call
+def get_disk_cleanup_candidates() -> Dict[str, Any]:
+    """Return structured cleanup candidates from mock data."""
+    payload = _load_disk_mock_data()
+    return dict(payload.get("cleanup_candidates", {}))
 
 
 if __name__ == "__main__":

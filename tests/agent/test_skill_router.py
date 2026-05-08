@@ -8,6 +8,11 @@ def test_infer_intents_matches_cpu_and_logs():
     assert "log_analysis" in intents
 
 
+def test_infer_intents_matches_disk_cleanup():
+    intents = infer_intents("服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议")
+    assert "disk_diagnosis" in intents
+
+
 def test_score_skill_prefers_service_and_alert_matches():
     skill = SkillDefinition(
         name="CPU Runbook",
@@ -39,3 +44,8 @@ def test_match_skills_limits_to_top_three(monkeypatch):
     result = match_skills("hit0 hit1 hit2 hit3 hit4", limit=3)
 
     assert len(result) == 3
+
+
+def test_match_skills_hits_disk_cleanup():
+    result = match_skills("服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议", limit=3)
+    assert any(skill["name"] == "disk_cleanup" for skill in result)

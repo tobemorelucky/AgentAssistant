@@ -55,6 +55,7 @@ class Settings(BaseSettings):
     rag_model: str = "qwen-max"  # 使用快速响应模型，不带扩展思考
 
     # 文档分块配置
+    aiops_max_steps: int = 8
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 

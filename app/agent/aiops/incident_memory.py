@@ -89,13 +89,19 @@ def append_incident(record: dict[str, Any]) -> None:
 
 def build_incident_record(state: dict[str, Any]) -> dict[str, Any]:
     """Build an incident record from final state."""
+    matched_skills = []
+    for skill in state.get("matched_skills", []):
+        if isinstance(skill, dict):
+            matched_skills.append(skill.get("name"))
+        else:
+            matched_skills.append(str(skill))
     summary_text = "\n".join(
         [state.get("input", ""), state.get("response", ""), " ".join(state.get("tools_used", []))]
     )
     return {
         "session_id": state.get("session_id", "default"),
         "user_task": state.get("input", ""),
-        "matched_skills": [skill.get("name") for skill in state.get("matched_skills", [])],
+        "matched_skills": [name for name in matched_skills if name],
         "tools_used": state.get("tools_used", []),
         "key_evidence": [
             {"step": step, "summary": str(result)[:240]}

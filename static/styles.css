@@ -12,6 +12,7 @@ body {
     min-height: 100vh;
     line-height: 1.6;
     overflow: hidden;
+    overflow-x: hidden;
 }
 
 /* 主布局 */
@@ -245,6 +246,7 @@ body {
     flex-direction: column;
     background: #ffffff;
     overflow: hidden;
+    min-width: 0;
     position: relative;
 }
 
@@ -299,12 +301,14 @@ body {
     flex: 1;
     padding: 64px 24px 24px 24px;
     overflow-y: auto;
+    overflow-x: hidden;
     background: #ffffff;
     width: 100%;
     display: flex;
     flex-direction: column;
     transition: all 0.5s ease;
     max-width: 100%;
+    min-width: 0;
 }
 
 @media (min-width: 768px) {
@@ -393,6 +397,7 @@ body {
     align-items: flex-start;
     gap: 12px;
     max-width: 100%;
+    min-width: 0;
 }
 
 /* AI消息图标 - 蓝色四角星 */
@@ -423,6 +428,7 @@ body {
     display: flex;
     flex-direction: column;
     min-width: 0;
+    max-width: 100%;
 }
 
 /* AI消息的包装器需要减去头像宽度 */
@@ -467,6 +473,9 @@ body {
     border: none;
     border-bottom-left-radius: 4px;
     box-shadow: none;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: hidden;
 }
 
 /* Markdown渲染样式 */
@@ -512,6 +521,7 @@ body {
     padding: 12px;
     border-radius: 8px;
     overflow-x: auto;
+    max-width: 100%;
     margin: 10px 0;
     border: 1px solid #e8eaed;
 }
@@ -535,6 +545,9 @@ body {
     border-collapse: collapse;
     width: 100%;
     margin: 10px 0;
+    display: block;
+    overflow-x: auto;
+    max-width: 100%;
 }
 
 .message-content th, .message-content td {
@@ -1030,6 +1043,29 @@ body {
     border: 1px solid rgba(26, 115, 232, 0.2);
 }
 
+.message.assistant.aiops-message {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 12px;
+    width: min(920px, 100%);
+    max-width: 100%;
+}
+
+.message.assistant.aiops-message .message-avatar {
+    display: none;
+}
+
+.message.assistant.aiops-message .message-content-wrapper {
+    width: 100%;
+    max-width: 100%;
+}
+
+.message.assistant.aiops-message .message-content {
+    width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
 /* 详情折叠区域 */
 .aiops-details {
     margin-bottom: 16px;
@@ -1079,6 +1115,8 @@ body {
     background: #f8f9fa;
     overflow: hidden;
     display: none;
+    width: 100%;
+    max-width: 100%;
 }
 
 .trace-panel.expanded {
@@ -1098,6 +1136,8 @@ body {
     border: 1px solid #d2e3fc;
     background: #ffffff;
     border-radius: 999px;
+    width: 100%;
+    align-self: stretch;
 }
 
 .trace-launcher:hover {
@@ -1127,6 +1167,8 @@ body {
     color: #5f6368;
     margin-top: 2px;
     white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    word-break: break-word;
 }
 
 .trace-item.status-success .trace-item-title {
@@ -1152,6 +1194,8 @@ body {
     border: 1px solid #e8eaed;
     border-radius: 12px;
     background: #ffffff;
+    width: 100%;
+    align-self: stretch;
 }
 
 .aiops-feedback-copy {
@@ -1170,6 +1214,7 @@ body {
     display: flex;
     gap: 8px;
     margin-top: 10px;
+    flex-wrap: wrap;
 }
 
 .aiops-feedback-btn {

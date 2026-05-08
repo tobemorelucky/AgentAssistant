@@ -126,7 +126,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, Any]:
             ]
         }
 
-    max_steps = 8
+    max_steps = max(1, int(config.aiops_max_steps))
     if len(past_steps) >= max_steps:
         llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
         return await _generate_response(state, llm)

@@ -87,14 +87,22 @@ def parse_disk_step_results(past_steps: list[tuple[str, str]]) -> dict[str, Any]
     return evidence
 
 
+def _as_dict(value: Any) -> dict[str, Any]:
+    return value if isinstance(value, dict) else {}
+
+
+def _as_list(value: Any) -> list[Any]:
+    return value if isinstance(value, list) else []
+
+
 def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]) -> str:
     evidence = parse_disk_step_results(past_steps)
-    disk_usage = evidence.get("get_disk_usage", {})
-    directories = list((evidence.get("list_large_directories", {}) or {}).get("directories", []) or [])
-    files = list((evidence.get("list_large_files", {}) or {}).get("files", []) or [])
-    deleted_open_files = list((evidence.get("query_deleted_open_files", {}) or {}).get("files", []) or [])
-    docker_usage = evidence.get("query_docker_disk_usage", {}) or {}
-    cleanup_candidates = evidence.get("get_disk_cleanup_candidates", {}) or {}
+    disk_usage = _as_dict(evidence.get("get_disk_usage", {}))
+    directories = _as_list(_as_dict(evidence.get("list_large_directories", {})).get("directories", []))
+    files = _as_list(_as_dict(evidence.get("list_large_files", {})).get("files", []))
+    deleted_open_files = _as_list(_as_dict(evidence.get("query_deleted_open_files", {})).get("files", []))
+    docker_usage = _as_dict(evidence.get("query_docker_disk_usage", {}))
+    cleanup_candidates = _as_dict(evidence.get("get_disk_cleanup_candidates", {}))
     knowledge = evidence.get("retrieve_knowledge", "")
 
     usage_percent = disk_usage.get("usage_percent", "unknown")

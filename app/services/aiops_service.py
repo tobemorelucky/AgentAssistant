@@ -1,11 +1,9 @@
-"""
-AIOps Agent orchestration service.
-"""
+"""AIOps Agent orchestration service."""
 
 from __future__ import annotations
 
 from copy import deepcopy
-from textwrap import dedent
+import json
 from typing import Any, AsyncGenerator
 
 from langgraph.graph import END, START, StateGraph
@@ -41,10 +39,9 @@ class AIOpsService:
 
     def __init__(self) -> None:
         self.graph = self._build_graph()
-        logger.info("Governed AIOps Agent Service 初始化完成")
+        logger.info("Governed AIOps Agent Service initialized")
 
     def _build_graph(self):
-        logger.info("构建 Agent 工作流图...")
         workflow = StateGraph(PlanExecuteState)
         workflow.add_node(NODE_SKILL_ROUTER, skill_router)
         workflow.add_node(NODE_PLANNER, planner)
@@ -147,6 +144,71 @@ class AIOpsService:
                 merged[key] = value
         return merged
 
+    @staticmethod
+    def _skill_names(skills: list[Any]) -> list[str]:
+        names: list[str] = []
+        for skill in skills or []:
+            if isinstance(skill, dict):
+                name = skill.get("name")
+            else:
+                name = skill
+            if name:
+                names.append(str(name))
+        return names
+
+    @staticmethod
+    def _summarize_step_result(result: Any) -> str:
+        parsed = result
+        if isinstance(result, str):
+            text = result.strip()
+            if not text:
+                return ""
+            try:
+                parsed = json.loads(text)
+            except json.JSONDecodeError:
+                return text[:200]
+
+        if isinstance(parsed, dict):
+            if {"usage_percent", "used_gb", "available_gb"} <= set(parsed.keys()):
+                return (
+                    f"根分区使用率 {parsed.get('usage_percent')}%，"
+                    f"已用 {parsed.get('used_gb')}GB，剩余 {parsed.get('available_gb')}GB"
+                )
+            if "directories" in parsed and isinstance(parsed["directories"], list):
+                first = parsed["directories"][0] if parsed["directories"] else {}
+                if isinstance(first, dict):
+                    return f"Top 目录 {first.get('path', '-')} 占用 {first.get('size_gb', '-')}GB"
+            if "files" in parsed and isinstance(parsed["files"], list):
+                first = parsed["files"][0] if parsed["files"] else {}
+                if isinstance(first, dict):
+                    return f"Top 文件 {first.get('path', '-')} 占用 {first.get('size_gb', '-')}GB"
+            if {"images_gb", "volumes_gb", "build_cache_gb"} & set(parsed.keys()):
+                return (
+                    f"Docker 占用 images {parsed.get('images_gb', '-')}GB, "
+                    f"volumes {parsed.get('volumes_gb', '-')}GB, "
+                    f"build cache {parsed.get('build_cache_gb', '-')}GB"
+                )
+            if {"safe", "need_approval", "forbidden"} & set(parsed.keys()):
+                safe_count = len(parsed.get("safe", []) or [])
+                approval_count = len(parsed.get("need_approval", []) or [])
+                forbidden_count = len(parsed.get("forbidden", []) or [])
+                return f"清理候选项：安全 {safe_count}，需确认 {approval_count}，禁止 {forbidden_count}"
+            preferred_keys = ["message", "service_name", "alert_name", "status", "total"]
+            fragments = [f"{key}={parsed[key]}" for key in preferred_keys if key in parsed]
+            if fragments:
+                return "，".join(fragments)[:200]
+            filtered = {k: v for k, v in parsed.items() if k not in {"type", "test", "data"}}
+            return json.dumps(filtered, ensure_ascii=False)[:200]
+
+        if isinstance(parsed, list):
+            if parsed and isinstance(parsed[0], dict):
+                first = parsed[0]
+                if isinstance(first, dict) and first.get("path"):
+                    return f"共 {len(parsed)} 项，首项 {first.get('path')}"
+            return f"共 {len(parsed)} 项结果"
+
+        return str(parsed)[:200]
+
     def _build_initial_state(self, user_input: str, session_id: str, mode: str) -> dict[str, Any]:
         snapshot = runtime_store.load_session(session_id)
         pending_payload = runtime_store.load_pending_actions(session_id)
@@ -159,12 +221,10 @@ class AIOpsService:
                 state["pending_action"]["status"] = pending_status
                 state["entry_node"] = NODE_EXECUTOR
                 state["status"] = "running"
-                logger.info(f"[会话 {session_id}] 从审批结果恢复执行: {pending_status}")
                 return state
             if pending_status == "pending" and state.get("pending_action"):
                 state["entry_node"] = NODE_EXECUTOR
                 state["status"] = "paused"
-                logger.info(f"[会话 {session_id}] 会话仍在等待审批")
                 return state
             if snapshot.get("status") == "running":
                 state["entry_node"] = NODE_REPLANNER if state.get("plan") else NODE_SKILL_ROUTER
@@ -208,9 +268,9 @@ class AIOpsService:
         events: list[dict[str, Any]] = []
         if node_name == NODE_SKILL_ROUTER:
             matched = current_state.get("matched_skills", [])
-            message = "未匹配到 Runbook Skill，使用通用诊断流程。"
+            message = "未命中额外 Runbook Skill，继续使用通用 AIOps 流程。"
             if matched:
-                message = f"命中 {len(matched)} 个 Skill: {', '.join(skill['name'] for skill in matched)}"
+                message = f"命中 {len(matched)} 个 Skill: {', '.join(self._skill_names(matched))}"
             events.append(self._status_event(message, NODE_SKILL_ROUTER))
 
         elif node_name == NODE_PLANNER:
@@ -229,9 +289,9 @@ class AIOpsService:
                     {
                         "type": "plan",
                         "stage": "plan_created",
-                        "message": f"执行计划已制定，共 {len(plan)} 个步骤",
+                        "message": f"诊断计划已生成，共 {len(plan)} 个步骤",
                         "plan": plan,
-                        "skills": [skill.get("name") for skill in current_state.get("matched_skills", [])],
+                        "skills": self._skill_names(current_state.get("matched_skills", [])),
                         "target_alert": current_state.get("target_alert"),
                         "active_alerts": current_state.get("active_alerts", []),
                     }
@@ -261,7 +321,7 @@ class AIOpsService:
                             "message": f"步骤执行完成 ({len(past_steps)}/{len(past_steps) + len(current_state.get('plan', []))})",
                             "current_step": last_step,
                             "remaining_steps": len(current_state.get("plan", [])),
-                            "result_preview": str(result)[:200],
+                            "result_preview": self._summarize_step_result(result),
                         }
                     )
 
@@ -304,8 +364,6 @@ class AIOpsService:
         session_id: str = "default",
         mode: str = "default",
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Execute the governed Agent workflow."""
-        logger.info(f"[会话 {session_id}] 开始执行任务")
         current_state = self._build_initial_state(user_input, session_id, mode)
 
         if current_state.get("status") == "paused" and current_state.get("pending_action"):
@@ -323,7 +381,6 @@ class AIOpsService:
         try:
             async for event in self.graph.astream(input=current_state, stream_mode="updates"):
                 for node_name, node_output in event.items():
-                    logger.info(f"节点 '{node_name}' 输出事件")
                     if not isinstance(node_output, dict):
                         continue
 
@@ -336,11 +393,7 @@ class AIOpsService:
 
                     for trace_event in node_output.get("trace_events", []):
                         append_trace_event(session_id, trace_event)
-                        yield {
-                            "type": "trace",
-                            "stage": node_name,
-                            "trace": trace_event,
-                        }
+                        yield {"type": "trace", "stage": node_name, "trace": trace_event}
 
                     if node_output.get("pending_action"):
                         runtime_store.save_pending_action(session_id, node_output["pending_action"])
@@ -369,12 +422,12 @@ class AIOpsService:
             yield {
                 "type": "complete",
                 "stage": "complete",
-                "message": "任务执行完成",
+                "message": "诊断完成",
                 "response": current_state.get("response", ""),
             }
 
         except Exception as exc:
-            logger.error(f"[会话 {session_id}] 任务执行失败: {exc}", exc_info=True)
+            logger.error(f"[session {session_id}] AIOps workflow failed: {exc}", exc_info=True)
             error_trace = create_trace_event(
                 session_id=session_id,
                 node="executor",
@@ -387,7 +440,7 @@ class AIOpsService:
             yield {
                 "type": "error",
                 "stage": "error",
-                "message": f"任务执行出错: {str(exc)}",
+                "message": f"诊断执行失败: {str(exc)}",
             }
 
     async def diagnose(
@@ -396,15 +449,14 @@ class AIOpsService:
         task: str | None = None,
         mode: str = "default",
     ) -> AsyncGenerator[dict[str, Any], None]:
-        """Compatibility wrapper for the existing /api/aiops endpoint."""
         aiops_task = (task or DEFAULT_AIOPS_TASK).strip()
         yield {
             "type": "status",
             "stage": "workflow_started",
             "message": (
-                "AIOps Agent 已接收诊断请求，正在初始化工作流。"
+                "AIOps Agent 正在启动自定义诊断..."
                 if mode == "custom"
-                else "AIOps Agent 已接收默认巡检请求，正在初始化工作流。"
+                else "AIOps Agent 正在启动默认巡检..."
             ),
         }
         async for event in self.execute(aiops_task, session_id, mode=mode):

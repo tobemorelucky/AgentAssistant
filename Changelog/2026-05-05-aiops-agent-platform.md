@@ -37,3 +37,8 @@
 - 新增基于纯模拟数据的 `disk_cleanup` AIOps Skill 测试链路：补充 `mock_data/disk.json`、`skills/disk_cleanup/SKILL.md`、`mcp_servers/monitor_server.py` 中的只读磁盘诊断工具，以及 `tool_policy.yaml` 的磁盘工具 `read_only` 分级。
 - 为磁盘诊断引入确定性的 Planner / Executor / Replanner 逻辑：命中 `disk_cleanup` 后会按固定顺序采集 `get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates` 和 `retrieve_knowledge`，最终生成包含具体数值、风险提示和禁止自动清理项的证据型报告。
 - 新增轻量测试覆盖磁盘链路：Skill Router 命中 `disk_diagnosis`、磁盘诊断计划顺序、以及最终报告中关键数值与安全段落的断言。
+- 修复磁盘诊断链路中的状态容错问题：AIOps 编排层和 incident memory 现在会兼容 `matched_skills` 为字典或字符串列表的情况，同时磁盘报告构建对 list/dict 结果做了更稳的兜底，避免出现 `'list' object has no attribute 'get'`。
+- 精简前端侧栏：移除了页面左下角的 Skill 草稿区域及其空态占位，只保留会话历史；Skill 草稿仍只在“是否帮助到您”反馈为“是”后由后端生成。
+- 清理前端摘要展示：执行步骤摘要和 Trace 参数现在会过滤掉 `type`、`test`、`data` 等原始结构噪声，优先展示磁盘使用率、Top 目录、大文件、Docker 占用等更可读的摘要信息。
+- 调整 AIOps 报告卡片布局：限制横向溢出，强化 `pre`/表格/Trace 的自动换行与纵向排列，避免页面在报告较长时出现左右拖拽；同时固定 `查看 Agent Trace` 在上、`是否帮助到您` 反馈区在下的顺序。
+- 新增 `.env` 配置 `AIOPS_MAX_STEPS=8`，并接入后端 `replanner` 的最大执行步数控制，便于按环境调整诊断深度。

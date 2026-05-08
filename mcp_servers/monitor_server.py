@@ -12,6 +12,7 @@
 import logging
 import functools
 import json
+import os
 import random
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
@@ -114,12 +115,79 @@ def generate_time_series(base_time: datetime, minutes_offset: int, format_str: s
     return result_time.strftime(format_str)
 
 
+def _load_mock_active_alerts(include_resolved: bool = False) -> list[dict[str, Any]]:
+    """Load mock active alerts.
+
+    Environment override:
+    - MOCK_ACTIVE_ALERTS=empty|none|0  => return no active alerts
+    - MOCK_ACTIVE_ALERTS=<json-array>  => return parsed alerts
+    """
+    raw = os.getenv("MOCK_ACTIVE_ALERTS", "").strip()
+    if raw.lower() in {"empty", "none", "0"}:
+        return []
+    if raw:
+        try:
+            parsed = json.loads(raw)
+            if isinstance(parsed, list):
+                return parsed
+        except json.JSONDecodeError:
+            logger.warning("MOCK_ACTIVE_ALERTS 不是有效 JSON，回退到默认 mock 告警")
+
+    alerts = [
+        {
+            "alert_name": "HighCPUUsage",
+            "severity": "critical",
+            "service_name": "data-sync-service",
+            "instance": "data-sync-service-01",
+            "duration": "12m",
+            "description": "CPU 使用率持续超过 80%",
+            "status": "firing",
+            "source": "mock-monitor",
+        }
+    ]
+    if include_resolved:
+        alerts.append(
+            {
+                "alert_name": "MemoryPressureRecovered",
+                "severity": "warning",
+                "service_name": "data-sync-service",
+                "instance": "data-sync-service-01",
+                "duration": "28m",
+                "description": "内存压力已恢复到正常范围",
+                "status": "resolved",
+                "source": "mock-monitor",
+            }
+        )
+    return alerts
+
+
 
 
 
 # ============================================================
 # 监控数据查询工具
 # ============================================================
+
+
+@mcp.tool()
+@log_tool_call
+def get_active_alerts(include_resolved: bool = False) -> Dict[str, Any]:
+    """获取当前系统的活跃告警列表。"""
+    alerts = _load_mock_active_alerts(include_resolved=include_resolved)
+    active_alerts = [alert for alert in alerts if alert.get("status") != "resolved"]
+    return {
+        "active_alerts": active_alerts,
+        "total": len(active_alerts),
+        "include_resolved": include_resolved,
+        "message": "已返回 mock 活跃告警列表" if active_alerts else "当前未检测到活跃告警",
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def list_active_alerts(include_resolved: bool = False) -> Dict[str, Any]:
+    """获取当前系统的活跃告警列表（get_active_alerts 的别名）。"""
+    return get_active_alerts(include_resolved=include_resolved)
 
 @mcp.tool()
 @log_tool_call
@@ -426,6 +494,101 @@ def query_memory_metrics(
             "statistics": {},
             "error": "时间范围无效或没有生成数据点"
         }
+
+
+@mcp.tool()
+@log_tool_call
+def query_process_list(service_name: str) -> Dict[str, Any]:
+    """查询指定服务的进程列表和资源热点。"""
+    return {
+        "service_name": service_name,
+        "instance_count": 2,
+        "processes": [
+            {
+                "instance": f"{service_name}-01",
+                "pid": 12345,
+                "cpu_percent": 93.6,
+                "memory_percent": 71.3,
+                "command": "python worker.py --sync-loop",
+            },
+            {
+                "instance": f"{service_name}-02",
+                "pid": 12378,
+                "cpu_percent": 27.4,
+                "memory_percent": 42.1,
+                "command": "python api.py",
+            },
+        ],
+        "message": f"已返回 {service_name} 的 mock 进程列表",
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def search_historical_tickets(service_name: str, alert_name: Optional[str] = None, limit: int = 5) -> Dict[str, Any]:
+    """查询服务相关的历史工单。"""
+    alert_label = alert_name or "HighCPUUsage"
+    tickets = [
+        {
+            "ticket_id": "INC-2026-0214",
+            "service_name": service_name,
+            "alert_name": alert_label,
+            "status": "resolved",
+            "summary": "批处理任务重试风暴导致 CPU 持续升高",
+            "root_cause": "下游接口超时后重试退避失效，worker 数量堆积",
+            "resolution": "降低并发并修复重试退避参数",
+        },
+        {
+            "ticket_id": "INC-2026-0130",
+            "service_name": service_name,
+            "alert_name": alert_label,
+            "status": "resolved",
+            "summary": "同步任务积压触发 CPU 告警",
+            "root_cause": "Kafka backlog 激增，单实例消费过载",
+            "resolution": "扩容消费者并限制单批次处理量",
+        },
+    ]
+    return {
+        "service_name": service_name,
+        "alert_name": alert_label,
+        "total": min(limit, len(tickets)),
+        "tickets": tickets[:limit],
+        "message": f"已返回 {service_name} 的 mock 历史工单",
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def get_service_info(service_name: str) -> Dict[str, Any]:
+    """查询服务基础信息。"""
+    return {
+        "service_name": service_name,
+        "owner_team": "data-platform",
+        "runtime": "python3.11",
+        "deployment": "kubernetes",
+        "instances": [
+            {"instance": f"{service_name}-01", "zone": "ap-beijing-a", "status": "running"},
+            {"instance": f"{service_name}-02", "zone": "ap-beijing-b", "status": "running"},
+        ],
+        "dependencies": ["kafka-sync-topic", "redis-lock", "order-db"],
+        "message": f"已返回 {service_name} 的 mock 服务信息",
+    }
+
+
+@mcp.tool()
+@log_tool_call
+def list_all_services() -> Dict[str, Any]:
+    """列出当前系统中的 mock 服务。"""
+    services = [
+        {"service_name": "data-sync-service", "status": "running", "owner_team": "data-platform"},
+        {"service_name": "api-gateway-service", "status": "running", "owner_team": "gateway-team"},
+        {"service_name": "billing-worker", "status": "running", "owner_team": "finance-platform"},
+    ]
+    return {
+        "total": len(services),
+        "services": services,
+        "message": "已返回 mock 服务列表",
+    }
 
 
 

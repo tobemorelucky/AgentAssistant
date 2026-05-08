@@ -23,12 +23,12 @@ call :KillPort 8004 "Monitor Server"
 taskkill /FI "WINDOWTITLE eq Monitor Server*" /F >nul 2>&1
 echo.
 
-echo [4/4] Stopping Milvus stack safely...
-docker compose -f vector-database.yml stop
+echo [4/4] Stopping Milvus stack and releasing container names...
+docker compose -f vector-database.yml down
 if errorlevel 1 (
-    echo [WARN] docker compose stop failed. Please check Docker Desktop.
+    echo [WARN] docker compose down failed. Please check Docker Desktop.
 ) else (
-    echo [OK] Milvus stack stopped safely. Data is preserved.
+    echo [OK] Milvus stack stopped. Container names released. Data is preserved.
 )
 echo.
 

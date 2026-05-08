@@ -8,7 +8,7 @@ from sse_starlette.sse import EventSourceResponse
 from loguru import logger
 
 from app.models.aiops import AIOpsRequest
-from app.services.aiops_service import aiops_service
+from app.services.aiops_service import DEFAULT_AIOPS_TASK, aiops_service
 
 router = APIRouter()
 
@@ -122,11 +122,13 @@ async def diagnose_stream(request: AIOpsRequest):
         SSE 事件流
     """
     session_id = request.session_id or "default"
-    logger.info(f"[会话 {session_id}] 收到 AIOps 诊断请求（流式）")
+    mode = (request.mode or "default").strip().lower() or "default"
+    task = (request.task or "").strip() or DEFAULT_AIOPS_TASK
+    logger.info(f"[会话 {session_id}] 收到 AIOps 诊断请求（流式），mode={mode}, task={task}")
 
     async def event_generator():
         try:
-            async for event in aiops_service.diagnose(session_id=session_id):
+            async for event in aiops_service.diagnose(session_id=session_id, task=task, mode=mode):
                 # 发送事件
                 yield {
                     "event": "message",

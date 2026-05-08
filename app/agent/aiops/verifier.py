@@ -32,10 +32,24 @@ class VerifierOutput(BaseModel):
 def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     response = state.get("response", "")
     past_steps = state.get("past_steps", [])
+    active_alerts = state.get("active_alerts", [])
     findings: list[str] = []
     suggested: list[str] = []
     missing: list[str] = []
     warnings: list[str] = []
+
+    if (
+        state.get("mode") == "default"
+        and not active_alerts
+        and "当前未检测到活跃告警" in response
+    ):
+        return VerifierOutput(
+            passed=True,
+            findings=[],
+            suggested_next_steps=[],
+            missing_evidence=[],
+            risk_warnings=[],
+        )
 
     if len(past_steps) < 2:
         findings.append("执行步骤过少，证据覆盖不足。")

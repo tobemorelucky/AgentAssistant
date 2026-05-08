@@ -177,7 +177,7 @@ curl -X POST "http://localhost:9900/api/chat_stream" \
 # AIOps 诊断
 curl -X POST "http://localhost:9900/api/aiops" \
   -H "Content-Type: application/json" \
-  -d '{"session_id":"session-123"}' \
+  -d '{"session_id":"session-123","task":"data-sync-service 出现 HighCPUUsage 告警，请排查","mode":"custom"}' \
   --no-buffer
 ```
 
@@ -209,6 +209,9 @@ Skill 草稿接口：
 
 - `POST /api/upload` 现在会返回 `indexed` 和 `index_error`，用于区分“上传成功”和“索引成功”
 - 当前 AIOps 工作流为 `Skill Router -> Planner -> Executor -> Replanner -> Verifier`
+- AIOps 支持两种模式：
+  `mode=default` 时执行默认巡检，优先查询当前活跃告警；
+  `mode=custom` 时直接使用用户输入的诊断任务
 - 前端已增加 Agent Trace 时间线、危险工具审批弹窗和 Skill 草稿面板
 
 ## 📁 项目结构
@@ -296,6 +299,13 @@ DASHSCOPE_API_KEY=your-api-key （配置你自己的秘钥）
 DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1  # 不配置则默认会使用新加坡站点
 DASHSCOPE_MODEL=qwen-max
 
+# Embedding 配置（可与问答模型使用不同厂商、不同 URL、不同 API Key）
+EMBEDDING_API_KEY=your-embedding-api-key
+EMBEDDING_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
+EMBEDDING_MODE=single_modal  # 默认单模态；可选 multimodal
+TEXT_EMBEDDING_MODEL=text-embedding-v4
+MULTIMODAL_EMBEDDING_MODEL=tongyi-embedding-vision-flash-2026-03-06
+
 # Milvus 配置
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
@@ -306,9 +316,26 @@ CHUNK_MAX_SIZE=800
 CHUNK_OVERLAP=100
 ```
 
+说明：
+
+- 文档上传、知识库检索、Incident Memory 当前都走文本 Embedding 接口，所以会使用 `TEXT_EMBEDDING_MODEL`
+- Embedding 链路优先读取 `EMBEDDING_API_KEY` 和 `EMBEDDING_API_BASE`；如果未配置，才会回退到 `DASHSCOPE_API_KEY` 和 `DASHSCOPE_API_BASE`
+- 只要向量服务提供 OpenAI 兼容的 Embedding 接口，就可以单独接入豆包等其他厂商
+- 如果需要为后续图片/多模态能力预留模型，请配置 `MULTIMODAL_EMBEDDING_MODEL`，不要把视觉模型填到文本模型位
+
 ## 🎯 AIOps 智能运维
 
 基于 **Plan-Execute-Replan** 模式实现自动故障诊断。
+
+支持两种触发方式：
+
+- 默认巡检模式：输入框为空时点击 `AI Ops`，会先查询 mock 活跃告警，再围绕最高严重级别告警做服务级诊断
+- 自定义诊断模式：输入框有内容时点击 `AI Ops`，会把输入内容作为 `task` 发送给后端
+
+说明：
+
+- `mcp_servers/monitor_server.py` 中的 `get_active_alerts` / `list_active_alerts` 会返回 mock 告警数据，默认包含 `data-sync-service / HighCPUUsage`
+- `aiops-docs/` 中的内容是上传到 RAG 的 runbook / 运维知识文档，不是实时日志或实时监控数据
 
 ### 核心特性
 - ✅ 自动制定诊断计划（Planner）
@@ -327,7 +354,7 @@ CHUNK_OVERLAP=100
 # 或使用 API
 curl -X POST "http://localhost:9900/api/aiops" \
   -H "Content-Type: application/json" \
-  -d '{"session_id":"test"}' \
+  -d '{"session_id":"test","mode":"default"}' \
   --no-buffer
 ```
 

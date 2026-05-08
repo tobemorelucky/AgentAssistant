@@ -60,17 +60,18 @@ def _lexical_similarity(query: str, text: str) -> float:
 
 
 def _embed_text(text: str) -> list[float] | None:
-    if not config.dashscope_api_key:
+    if not config.get_embedding_api_key():
         return None
     try:
+        model = config.get_validated_text_embedding_model()
         client = OpenAI(
-            api_key=config.dashscope_api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1",
+            api_key=config.get_embedding_api_key(),
+            base_url=config.get_embedding_api_base(),
         )
         response = client.embeddings.create(
-            model=config.dashscope_embedding_model,
+            model=model,
             input=text,
-            dimensions=1024,
+            dimensions=config.get_embedding_dimensions(),
             encoding_format="float",
         )
         return response.data[0].embedding

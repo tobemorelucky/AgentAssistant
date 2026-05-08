@@ -18,6 +18,7 @@
 **监控数据服务** - 端口 8004
 
 **核心工具：**
+- `get_active_alerts` / `list_active_alerts` - 活跃告警巡检入口（默认返回 mock 告警）
 - `query_cpu_metrics` - CPU 使用率查询
 - `query_memory_metrics` - 内存使用查询
 - `query_process_list` - 进程列表

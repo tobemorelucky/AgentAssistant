@@ -1,4 +1,4 @@
-"""向量嵌入服务模块 - 基于 LangChain Embeddings 标准接口"""
+"""向量嵌入服务模块 - 基于 LangChain Embeddings 标准接口。"""
 
 from typing import List
 
@@ -9,8 +9,8 @@ from loguru import logger
 from app.config import config
 
 
-class DashScopeEmbeddings(Embeddings):
-    """阿里云 DashScope Text Embedding (OpenAI 兼容模式)
+class OpenAICompatibleEmbeddings(Embeddings):
+    """OpenAI 兼容模式的文本 Embedding 封装。
     
     实现 LangChain 标准 Embeddings 接口:
     - embed_documents(texts: List[str]) → List[List[float]]: 批量嵌入文档
@@ -22,30 +22,40 @@ class DashScopeEmbeddings(Embeddings):
         api_key: str,
         model: str = "text-embedding-v4",
         dimensions: int = 1024,
+        base_url: str = "https://dashscope.aliyuncs.com/compatible-mode/v1",
     ):
         """
-        初始化 DashScope Embeddings
+        初始化 Embeddings 客户端。
         
         Args:
-            api_key: DashScope API Key
+            api_key: Embedding API Key
             model: 嵌入模型名称
             dimensions: 向量维度
+            base_url: OpenAI 兼容模式 API 地址
         """
         if not api_key or api_key == "your-api-key-here":
-            raise ValueError("请设置环境变量 DASHSCOPE_API_KEY")
+            raise ValueError("请设置环境变量 EMBEDDING_API_KEY（未配置时会回退到 DASHSCOPE_API_KEY）")
+        if config.is_multimodal_embedding_model(model):
+            raise ValueError(
+                "当前文档索引/检索链路使用的是 OpenAI 兼容文本 Embedding 接口，"
+                f"不支持多模态模型 {model}。"
+                "请将 .env 中的 TEXT_EMBEDDING_MODEL 配置为文本模型，"
+                "并把视觉向量模型放到 MULTIMODAL_EMBEDDING_MODEL。"
+            )
         
         self.client = OpenAI(
             api_key=api_key,
-            base_url="https://dashscope.aliyuncs.com/compatible-mode/v1"
+            base_url=base_url,
         )
         self.model = model
         self.dimensions = dimensions
+        self.base_url = base_url
         
         # 打印初始化信息
         masked_key = self._mask_api_key(api_key)
         logger.info(
-            f"DashScope Embeddings 初始化完成 - "
-            f"模型: {model}, 维度: {dimensions}, API Key: {masked_key}"
+            f"OpenAI Compatible Embeddings 初始化完成 - "
+            f"模型: {model}, 维度: {dimensions}, Base URL: {base_url}, API Key: {masked_key}"
         )
 
     @staticmethod
@@ -122,8 +132,9 @@ class DashScopeEmbeddings(Embeddings):
 
 
 # 全局单例
-vector_embedding_service = DashScopeEmbeddings(
-    api_key=config.dashscope_api_key,
-    model=config.dashscope_embedding_model,
-    dimensions=1024
+vector_embedding_service = OpenAICompatibleEmbeddings(
+    api_key=config.get_embedding_api_key(),
+    model=config.get_validated_text_embedding_model(),
+    dimensions=config.get_embedding_dimensions(),
+    base_url=config.get_embedding_api_base(),
 )

@@ -14,22 +14,13 @@ from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_qwq import ChatQwen
 from loguru import logger
 
+from app.agent.mcp_client import get_mcp_client_with_retry
 from app.agent.aiops.tool_policy import check_tool_policy
 from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
-from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
-
-
-async def _invoke_tool(tool: Any, args: dict[str, Any]) -> Any:
-    if hasattr(tool, "ainvoke"):
-        return await tool.ainvoke(args)
-    if hasattr(tool, "invoke"):
-        return tool.invoke(args)
-    if callable(tool):
-        return tool(**args)
-    raise RuntimeError(f"Tool '{getattr(tool, 'name', tool)}' is not invokable")
+from .utils import invoke_tool
 
 
 def _now_iso() -> str:
@@ -206,7 +197,7 @@ async def executor(state: PlanExecuteState) -> Dict[str, Any]:
 
                 started_at = _now_iso()
                 started_ts = time.perf_counter()
-                tool_result = await _invoke_tool(tool, args)
+                tool_result = await invoke_tool(tool, args)
                 duration_ms = int((time.perf_counter() - started_ts) * 1000)
                 ended_at = _now_iso()
                 trace_events.append(

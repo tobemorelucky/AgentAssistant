@@ -17,6 +17,10 @@ tools:
     level: read_only
   query_memory_metrics:
     level: read_only
+  get_active_alerts:
+    level: read_only
+  list_active_alerts:
+    level: read_only
   query_process_list:
     level: read_only
   search_historical_tickets:

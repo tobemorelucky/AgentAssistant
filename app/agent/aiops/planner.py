@@ -1,23 +1,23 @@
-"""
-Planner 节点：制定执行计划
-基于 LangGraph 官方教程实现
-"""
+"""Planner 节点：制定执行计划。"""
+
+from __future__ import annotations
 
 from textwrap import dedent
-from typing import Dict, Any, List
+from typing import Any, Dict, List
+
 from langchain_core.prompts import ChatPromptTemplate
 from langchain_qwq import ChatQwen
-from pydantic import BaseModel, Field
 from loguru import logger
+from pydantic import BaseModel, Field
 
 from app.agent.aiops.incident_memory import find_similar_incidents
 from app.agent.aiops.profile_loader import get_agent_profile_prompt
-from app.agent.aiops.trace import create_trace_event
+from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.config import config
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 from .state import PlanExecuteState
-from .utils import format_tools_description
+from .utils import format_tools_description, invoke_tool
 
 
 class Plan(BaseModel):
@@ -62,6 +62,112 @@ planner_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
+DEFAULT_ALERT_KEYWORDS = (
+    "当前系统",
+    "活跃告警",
+    "当前未检测到活跃告警",
+    "检查当前系统是否存在活跃告警",
+)
+SEVERITY_ORDER = {"critical": 4, "high": 3, "warning": 2, "info": 1, "low": 1}
+
+
+def should_fetch_active_alerts(mode: str, input_text: str) -> bool:
+    """Whether this request should start from active alert discovery."""
+    normalized = (input_text or "").strip().lower()
+    if mode == "default":
+        return True
+    return any(keyword.lower() in normalized for keyword in DEFAULT_ALERT_KEYWORDS)
+
+
+def choose_highest_severity_alert(alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """Select the highest severity alert, preserving stable ordering for ties."""
+    if not alerts:
+        return None
+    return sorted(
+        alerts,
+        key=lambda alert: (
+            -SEVERITY_ORDER.get(str(alert.get("severity", "")).lower(), 0),
+            str(alert.get("service_name", "")),
+            str(alert.get("alert_name", "")),
+        ),
+    )[0]
+
+
+def build_no_alert_report() -> str:
+    """Return a structured patrol report when no active alerts are present."""
+    return dedent(
+        """
+        # 告警分析报告
+
+        ## 活跃告警清单
+        - 当前未检测到活跃告警
+
+        ## 执行轨迹摘要
+        - 已执行活跃告警巡检
+        - 已核对监控系统返回的 active alerts 数据
+        - 因未发现活跃告警，未继续进入服务级深度诊断
+
+        ## 根因分析
+        - 当前无可归因的活跃告警
+        - 未发现需要进一步分析的异常服务
+
+        ## 关键证据
+        - 监控系统 active alerts 查询结果为空
+
+        ## 影响范围
+        - 当前未发现受活跃告警影响的服务
+        - 时间范围：本次巡检执行时刻
+        - 风险范围：无明显即时风险
+
+        ## 风险提示
+        - 本次巡检结论仅基于当前 mock 监控与知识库数据
+        - 若后续出现瞬时告警或外部系统异常，请重新发起诊断
+
+        ## 处理建议
+        - 继续保持常规巡检
+        - 如需针对特定服务做预防性排查，可使用自定义诊断模式
+        """
+    ).strip()
+
+
+def build_default_alert_plan(alert: dict[str, Any]) -> list[str]:
+    """Build a deterministic patrol plan around the selected alert."""
+    service_name = alert.get("service_name", "unknown-service")
+    alert_name = alert.get("alert_name", "unknown-alert")
+    instance = alert.get("instance", "unknown-instance")
+    duration = alert.get("duration", "unknown")
+    return [
+        (
+            f"使用 get_service_info 查询 {service_name} 的服务拓扑和实例详情，"
+            f"确认告警实例 {instance} 与运行状态。"
+        ),
+        (
+            f"使用 query_cpu_metrics 分析 {service_name} 最近 30 分钟 CPU 指标，"
+            f"验证告警 {alert_name} 在持续 {duration} 内的触发趋势。"
+        ),
+        f"使用 query_memory_metrics 检查 {service_name} 同时间窗的内存和资源压力，排除伴生资源瓶颈。",
+        (
+            f"先使用 search_topic_by_service_name 查找 {service_name} 的日志主题，"
+            "再结合 get_current_timestamp 和 search_log 查询最近 30 分钟 ERROR/WARN 日志。"
+        ),
+        f"使用 search_historical_tickets 查询 {service_name} 的历史工单，核对是否存在相似 {alert_name} 事件。",
+        f"使用 retrieve_knowledge 检索 {service_name} / {alert_name} 对应的 runbook，形成修复建议和风险提示。",
+    ]
+
+
+def summarize_alerts(alerts: list[dict[str, Any]]) -> str:
+    """Create compact alert summaries for prompts and traces."""
+    if not alerts:
+        return "No active alerts."
+    return "; ".join(
+        (
+            f"{alert.get('service_name', 'unknown')}/"
+            f"{alert.get('alert_name', 'unknown')} "
+            f"[{alert.get('severity', 'unknown')}]"
+        )
+        for alert in alerts[:5]
+    )
+
 
 async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     """
@@ -74,10 +180,23 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
     logger.info("=== Planner：制定执行计划 ===")
 
     input_text = state.get("input", "")
+    mode = state.get("mode", "default")
     session_id = state.get("session_id", "default")
     logger.info(f"用户输入: {input_text}")
 
     try:
+        # 获取本地工具
+        local_tools = [get_current_time, retrieve_knowledge]
+
+        # 获取 MCP 工具
+        mcp_client = await get_mcp_client_with_retry()
+        mcp_tools = await mcp_client.get_tools()
+        all_tools = local_tools + mcp_tools
+        tool_map = {
+            tool.name if hasattr(tool, "name") else str(tool): tool
+            for tool in all_tools
+        }
+
         agent_profile = get_agent_profile_prompt()
         matched_skills = state.get("matched_skills", [])
         skill_context = (
@@ -98,6 +217,79 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
             else "无相似 Incident Case。"
         )
 
+        alerts_trace_events: list[dict[str, Any]] = []
+        active_alerts = list(state.get("active_alerts", []) or [])
+        target_alert = state.get("target_alert")
+        if should_fetch_active_alerts(mode, input_text):
+            active_alert_tool = tool_map.get("get_active_alerts") or tool_map.get("list_active_alerts")
+            if active_alert_tool is None:
+                logger.warning("默认巡检模式未找到 get_active_alerts/list_active_alerts 工具")
+            else:
+                alert_result = await invoke_tool(active_alert_tool, {"include_resolved": False})
+                active_alerts = list(
+                    alert_result.get("active_alerts")
+                    or alert_result.get("alerts")
+                    or []
+                )
+                target_alert = choose_highest_severity_alert(active_alerts)
+                alerts_trace_events.append(
+                    create_trace_event(
+                        session_id=session_id,
+                        node="tool_call",
+                        status="success",
+                        title="Fetched active alerts for patrol",
+                        tool_name=getattr(active_alert_tool, "name", "get_active_alerts"),
+                        tool_args={"include_resolved": False},
+                        result_summary=summarize_result(alert_result),
+                        metadata={
+                            "active_alert_count": len(active_alerts),
+                            "target_alert": target_alert or {},
+                            "source": "planner",
+                        },
+                    )
+                )
+
+                if not active_alerts:
+                    report = build_no_alert_report()
+                    alerts_trace_events.append(
+                        create_trace_event(
+                            session_id=session_id,
+                            node="planner",
+                            status="success",
+                            title="No active alerts found",
+                            result_summary="Patrol completed with no active alerts",
+                        )
+                    )
+                    return {
+                        "active_alerts": [],
+                        "target_alert": None,
+                        "response": report,
+                        "trace_events": alerts_trace_events,
+                    }
+
+                if target_alert:
+                    plan_steps = build_default_alert_plan(target_alert)
+                    alerts_trace_events.append(
+                        create_trace_event(
+                            session_id=session_id,
+                            node="planner",
+                            status="success",
+                            title=f"Default patrol plan for {target_alert.get('service_name', 'unknown-service')}",
+                            result_summary=" | ".join(plan_steps[:3]),
+                            metadata={
+                                "active_alerts": active_alerts,
+                                "target_alert": target_alert,
+                            },
+                        )
+                    )
+                    return {
+                        "plan": plan_steps,
+                        "active_alerts": active_alerts,
+                        "target_alert": target_alert,
+                        "similar_incidents": similar_incidents,
+                        "trace_events": alerts_trace_events,
+                    }
+
         # 步骤1: 查询内部文档获取相关经验
         logger.info("查询内部文档，寻找相关经验...")
         experience_docs = ""
@@ -113,19 +305,6 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         except Exception as e:
             logger.warning(f"查询内部文档失败: {e}")
 
-        # 步骤2: 获取可用工具列表
-        # 获取本地工具
-        local_tools = [
-            get_current_time,
-            retrieve_knowledge
-        ]
-
-        # 获取 MCP 工具
-        mcp_client = await get_mcp_client_with_retry()
-        mcp_tools = await mcp_client.get_tools()
-
-        # 合并所有工具
-        all_tools = local_tools + mcp_tools
         logger.info(f"可用工具数量: 本地 {len(local_tools)} + MCP {len(mcp_tools)}")
 
         # 格式化工具描述
@@ -170,6 +349,12 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
                     ## Similar Incident Cases
                     {incident_context}
 
+                    ## Active Alerts
+                    {summarize_alerts(active_alerts)}
+
+                    ## Selected Target Alert
+                    {summarize_result(target_alert)}
+
                     {experience_context}
                     """
                 ).strip()
@@ -202,7 +387,9 @@ async def planner(state: PlanExecuteState) -> Dict[str, Any]:
         return {
             "plan": plan_steps,
             "similar_incidents": similar_incidents,
-            "trace_events": [trace_event],
+            "active_alerts": active_alerts,
+            "target_alert": target_alert,
+            "trace_events": alerts_trace_events + [trace_event],
         }
 
     except Exception as e:

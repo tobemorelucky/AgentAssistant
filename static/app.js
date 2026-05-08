@@ -8,6 +8,8 @@ class SuperBizAgentApp {
         this.chatHistories = this.loadChatHistories();
         this.currentAIOpsTrace = [];
         this.currentAIOpsMessage = null;
+        this.currentAIOpsContext = null;
+        this.currentAIOpsState = null;
         this.pendingApproval = null;
         this.skillDrafts = [];
 
@@ -296,6 +298,141 @@ class SuperBizAgentApp {
         return this.addMessage("assistant", content, true, false);
     }
 
+    createAIOpsRenderState(task, mode) {
+        return {
+            task,
+            mode,
+            statusMessages: [],
+            plan: [],
+            steps: [],
+            verifier: null,
+            report: "",
+            error: "",
+        };
+    }
+
+    ensureAIOpsState() {
+        if (!this.currentAIOpsState) {
+            const context = this.currentAIOpsContext || { task: "", mode: "default" };
+            this.currentAIOpsState = this.createAIOpsRenderState(context.task, context.mode);
+        }
+        return this.currentAIOpsState;
+    }
+
+    addAIOpsStatus(message, stage = "") {
+        const state = this.ensureAIOpsState();
+        const normalizedMessage = (message || "").trim();
+        if (!normalizedMessage) return;
+        const last = state.statusMessages[state.statusMessages.length - 1];
+        if (last && last.message === normalizedMessage && last.stage === stage) return;
+        state.statusMessages.push({ stage, message: normalizedMessage });
+    }
+
+    buildAIOpsMarkdown({ final = false } = {}) {
+        const state = this.ensureAIOpsState();
+        const lines = [];
+        lines.push(`# AIOps ${final ? "诊断结果" : "诊断进行中"}`);
+        lines.push("");
+        lines.push(`- 模式：${state.mode === "custom" ? "自定义诊断" : "默认巡检"}`);
+        lines.push(`- 任务：${state.task || "未提供任务"}`);
+
+        if (state.statusMessages.length) {
+            lines.push("");
+            lines.push("## 状态更新");
+            state.statusMessages.slice(-8).forEach((item) => {
+                lines.push(`- ${item.message}`);
+            });
+        }
+
+        if (Array.isArray(state.plan) && state.plan.length) {
+            lines.push("");
+            lines.push("## 诊断计划");
+            state.plan.forEach((step, index) => {
+                lines.push(`${index + 1}. ${step}`);
+            });
+        }
+
+        if (state.steps.length) {
+            lines.push("");
+            lines.push("## 执行步骤");
+            state.steps.forEach((step, index) => {
+                lines.push(`### 步骤 ${index + 1}`);
+                lines.push(`- 任务：${step.current_step || "未知步骤"}`);
+                lines.push(`- 摘要：${step.result_preview || "无"}`);
+                if (typeof step.remaining_steps === "number") {
+                    lines.push(`- 剩余步骤：${step.remaining_steps}`);
+                }
+                lines.push("");
+            });
+        }
+
+        if (state.verifier) {
+            lines.push("");
+            lines.push("## Verifier 检查");
+            lines.push(`- 结果：${state.verifier.passed ? "通过" : "未通过"}`);
+            if (Array.isArray(state.verifier.findings) && state.verifier.findings.length) {
+                state.verifier.findings.forEach((item) => lines.push(`- 发现：${item}`));
+            }
+            if (Array.isArray(state.verifier.suggested_next_steps) && state.verifier.suggested_next_steps.length) {
+                state.verifier.suggested_next_steps.forEach((item) => lines.push(`- 建议补充：${item}`));
+            }
+        }
+
+        if (state.report) {
+            lines.push("");
+            lines.push("## 最终报告");
+            lines.push("");
+            lines.push(state.report);
+        }
+
+        if (state.error) {
+            lines.push("");
+            lines.push("## 错误");
+            lines.push(state.error);
+        }
+
+        return lines.join("\n").trim();
+    }
+
+    renderAIOpsProgress({ final = false, persistFinal = false } = {}) {
+        const content = this.buildAIOpsMarkdown({ final });
+        if (final || persistFinal) {
+            this.updateAIOpsMessage(this.currentAIOpsMessage, content, this.currentAIOpsTrace, persistFinal);
+        } else {
+            if (!this.currentAIOpsMessage) {
+                this.currentAIOpsMessage = this.addLoadingMessage(content);
+                this.currentAIOpsMessage.classList.add("aiops-message");
+            }
+            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
+            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
+            this.upsertAIOpsProgressMessage(content, this.currentAIOpsTrace);
+        }
+    }
+
+    extractSSEBlocks(buffer) {
+        const normalized = buffer.replace(/\r\n/g, "\n");
+        const chunks = normalized.split("\n\n");
+        return {
+            blocks: chunks.slice(0, -1),
+            rest: chunks[chunks.length - 1] || "",
+        };
+    }
+
+    parseSSEPayload(block) {
+        const dataLines = block
+            .split("\n")
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).trimStart());
+        if (!dataLines.length) return null;
+
+        const raw = dataLines.join("\n").trim();
+        if (!raw) return null;
+
+        const payload = JSON.parse(raw);
+        console.log("[AIOps SSE]", payload);
+        return payload;
+    }
+
     upsertAIOpsProgressMessage(content, traceEntries = []) {
         const payload = {
             type: "assistant",
@@ -318,12 +455,14 @@ class SuperBizAgentApp {
         if (!this.chatMessages) return;
         this.chatMessages.innerHTML = "";
         this.currentAIOpsMessage = null;
+        this.currentAIOpsTrace = [];
 
         this.currentChatHistory.forEach((message) => {
             const element = this.addMessage(message.type, message.content, false, false, message);
             if (message.meta === "aiops-progress") {
                 element.classList.add("aiops-message");
                 this.currentAIOpsMessage = element;
+                this.currentAIOpsTrace = Array.isArray(message.traceEntries) ? [...message.traceEntries] : [];
                 this.renderTraceTimeline(element, message.traceEntries || []);
             }
             if (message.meta === "aiops-final") {
@@ -339,6 +478,8 @@ class SuperBizAgentApp {
         this.currentChatHistory = Array.isArray(history.messages) ? [...history.messages] : [];
         this.currentAIOpsTrace = [];
         this.currentAIOpsMessage = null;
+        this.currentAIOpsContext = null;
+        this.currentAIOpsState = null;
         this.pendingApproval = null;
         this.renderCurrentConversation();
         this.scrollToBottom();
@@ -350,6 +491,8 @@ class SuperBizAgentApp {
         this.currentChatHistory = [];
         this.currentAIOpsTrace = [];
         this.currentAIOpsMessage = null;
+        this.currentAIOpsContext = null;
+        this.currentAIOpsState = null;
         this.pendingApproval = null;
         if (this.messageInput) this.messageInput.value = "";
         this.renderCurrentConversation();
@@ -393,9 +536,14 @@ class SuperBizAgentApp {
             const meta = [trace.node, trace.tool_name, trace.duration_ms ? `${trace.duration_ms}ms` : ""]
                 .filter(Boolean)
                 .join(" | ");
+            const argsSummary = trace.tool_args && Object.keys(trace.tool_args).length
+                ? JSON.stringify(trace.tool_args)
+                : "";
             item.innerHTML = `
                 <div class="trace-item-title">${this.escapeHtml(trace.title || "Trace event")}</div>
                 <div class="trace-item-meta">${this.escapeHtml(meta)}</div>
+                <div class="trace-item-meta">${this.escapeHtml(trace.status || "")}</div>
+                ${argsSummary ? `<div class="trace-item-summary">${this.escapeHtml(argsSummary)}</div>` : ""}
                 <div class="trace-item-summary">${this.escapeHtml(trace.result_summary || "")}</div>
             `;
             list.appendChild(item);
@@ -704,6 +852,95 @@ class SuperBizAgentApp {
         this.approvalModal?.classList.add("hidden");
     }
 
+    async processAIOpsPayload(payload) {
+        if (!payload) return false;
+
+        if (payload.type === "trace" && payload.trace) {
+            this.currentAIOpsTrace.push(payload.trace);
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "status") {
+            this.addAIOpsStatus(payload.message || "正在分析...", payload.stage || "status");
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "plan") {
+            this.ensureAIOpsState().plan = Array.isArray(payload.plan) ? payload.plan : [];
+            if (payload.target_alert?.service_name && payload.target_alert?.alert_name) {
+                this.addAIOpsStatus(
+                    `已锁定目标告警：${payload.target_alert.service_name} / ${payload.target_alert.alert_name}`,
+                    "target_alert",
+                );
+            }
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "step_complete") {
+            this.ensureAIOpsState().steps.push({
+                current_step: payload.current_step || "执行步骤",
+                result_preview: payload.result_preview || "",
+                remaining_steps: payload.remaining_steps,
+            });
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "verifier_result") {
+            this.ensureAIOpsState().verifier = {
+                passed: !!payload.passed,
+                findings: Array.isArray(payload.findings) ? payload.findings : [],
+                suggested_next_steps: Array.isArray(payload.suggested_next_steps)
+                    ? payload.suggested_next_steps
+                    : [],
+            };
+            this.addAIOpsStatus(
+                payload.passed ? "Verifier 已通过。" : "Verifier 未通过，正在补充证据。",
+                "verifier",
+            );
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "approval_required") {
+            this.addAIOpsStatus(
+                `危险工具 ${payload.tool_name || "-"} 需要人工审批。`,
+                "approval_required",
+            );
+            this.renderAIOpsProgress();
+            this.openApprovalModal(payload);
+            return true;
+        }
+
+        if (payload.type === "report") {
+            this.ensureAIOpsState().report = payload.report || this.ensureAIOpsState().report;
+            this.renderAIOpsProgress();
+            return false;
+        }
+
+        if (payload.type === "complete") {
+            const finalReport =
+                payload.diagnosis?.report ||
+                payload.response ||
+                this.ensureAIOpsState().report ||
+                "诊断已完成。";
+            this.ensureAIOpsState().report = finalReport;
+            this.addAIOpsStatus("AIOps 诊断完成。", "complete");
+            this.renderAIOpsProgress({ final: true, persistFinal: true });
+            this.showNotification("AIOps 诊断完成", "success");
+            return true;
+        }
+
+        if (payload.type === "error") {
+            throw new Error(payload.message || "AIOps 诊断失败");
+        }
+
+        return false;
+    }
+
     async handleApprovalDecision(approved) {
         if (!this.pendingApproval) return;
         const endpoint = approved ? "/api/agent/approve" : "/api/agent/reject";
@@ -727,46 +964,51 @@ class SuperBizAgentApp {
             this.closeApprovalModal();
             this.pendingApproval = null;
             this.showNotification(approved ? "已批准执行，继续诊断" : "已拒绝执行，重新规划中", "success");
-            await this.sendAIOpsRequest(true);
+            await this.sendAIOpsRequest({ resume: true });
         } catch (error) {
             this.showNotification(`审批操作失败: ${error.message}`, "error");
         }
     }
 
-    async sendAIOpsRequest(resume = false) {
+    async sendAIOpsRequest({ resume = false, task = "", mode = "default" } = {}) {
         if (this.isStreaming) {
             this.showNotification("当前已有任务在执行中", "warning");
             return;
         }
 
-        const syncProgress = (content) => {
-            this.upsertAIOpsProgressMessage(content, this.currentAIOpsTrace);
-            this.renderTraceTimeline(this.currentAIOpsMessage, this.currentAIOpsTrace);
-        };
-
         this.isStreaming = true;
         if (!resume) {
+            this.currentAIOpsContext = { task, mode };
+            this.currentAIOpsState = this.createAIOpsRenderState(task, mode);
             this.currentAIOpsTrace = [];
             this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
             this.currentAIOpsMessage.classList.add("aiops-message");
-            syncProgress("AIOps Agent 正在启动诊断...");
+            this.addAIOpsStatus("AIOps Agent 正在启动诊断...", "workflow_started");
+            this.renderAIOpsProgress();
         } else if (this.currentAIOpsMessage) {
-            this.updateAssistantMessage(this.currentAIOpsMessage, "审批已处理，正在继续执行...");
-            syncProgress("审批已处理，正在继续执行...");
+            this.addAIOpsStatus("审批已处理，正在继续执行...", "approval_resume");
+            this.renderAIOpsProgress();
         } else {
+            const context = this.currentAIOpsContext || { task, mode };
+            this.currentAIOpsContext = context;
+            this.currentAIOpsState = this.currentAIOpsState || this.createAIOpsRenderState(context.task, context.mode);
             this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在继续执行...");
             this.currentAIOpsMessage.classList.add("aiops-message");
-            syncProgress("AIOps Agent 正在继续执行...");
+            this.addAIOpsStatus("AIOps Agent 正在继续执行...", "workflow_resume");
+            this.renderAIOpsProgress();
         }
 
         this.updateUI();
-        let reportContent = "";
 
         try {
             const response = await fetch("/api/aiops", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({ session_id: this.sessionId }),
+                body: JSON.stringify({
+                    session_id: this.sessionId,
+                    task: (this.currentAIOpsContext?.task || task || "").trim(),
+                    mode: this.currentAIOpsContext?.mode || mode || "default",
+                }),
             });
 
             if (!response.ok || !response.body) {
@@ -780,98 +1022,43 @@ class SuperBizAgentApp {
             try {
                 while (true) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        const { blocks, rest } = this.extractSSEBlocks(buffer);
+                        buffer = rest;
+                        for (const block of blocks) {
+                            const payload = this.parseSSEPayload(block);
+                            if (!payload) continue;
+                            const shouldStop = await this.processAIOpsPayload(payload);
+                            if (shouldStop) return;
+                        }
+                        if (buffer.trim()) {
+                            const payload = this.parseSSEPayload(buffer);
+                            if (payload) {
+                                const shouldStop = await this.processAIOpsPayload(payload);
+                                if (shouldStop) return;
+                            }
+                        }
+                        break;
+                    }
 
                     buffer += decoder.decode(value, { stream: true });
-                    const chunks = buffer.split("\n\n");
-                    buffer = chunks.pop() || "";
+                    const { blocks, rest } = this.extractSSEBlocks(buffer);
+                    buffer = rest;
 
-                    for (const chunk of chunks) {
-                        const dataLine = chunk.split("\n").find((line) => line.startsWith("data:"));
-                        if (!dataLine) continue;
-
-                        const payload = JSON.parse(dataLine.slice(5).trim());
-
-                        if (payload.type === "trace" && payload.trace) {
-                            this.currentAIOpsTrace.push(payload.trace);
-                            const content =
-                                this.currentAIOpsMessage?.querySelector(".message-content")?.textContent ||
-                                "AIOps Agent 正在执行中...";
-                            syncProgress(content);
-                            continue;
-                        }
-
-                        if (payload.type === "status") {
-                            const content = `${payload.message || "正在分析..."}\n\n当前 Trace 数：${this.currentAIOpsTrace.length}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, content);
-                            syncProgress(content);
-                            continue;
-                        }
-
-                        if (payload.type === "plan") {
-                            const planText = Array.isArray(payload.plan)
-                                ? payload.plan.map((step, index) => `${index + 1}. ${step}`).join("\n")
-                                : "暂无计划";
-                            const content = `## 诊断计划\n\n${planText}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
-                            syncProgress(content);
-                            continue;
-                        }
-
-                        if (payload.type === "step_complete") {
-                            const content = `## 执行中\n\n当前步骤：${payload.current_step || "执行步骤"}\n\n结果摘要：${payload.result_preview || ""}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
-                            syncProgress(content);
-                            continue;
-                        }
-
-                        if (payload.type === "verifier_result") {
-                            const findings = Array.isArray(payload.findings)
-                                ? payload.findings.map((item) => `- ${item}`).join("\n")
-                                : "";
-                            const content = payload.passed
-                                ? "Verifier 已通过，正在生成最终报告。"
-                                : `Verifier 未通过，正在补充证据。\n\n${findings}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
-                            syncProgress(content);
-                            continue;
-                        }
-
-                        if (payload.type === "approval_required") {
-                            const content = `## 等待审批\n\n工具：${payload.tool_name || "-"}\n\n原因：${payload.reason || ""}`;
-                            this.updateAssistantMessage(this.currentAIOpsMessage, content, { markdown: true });
-                            syncProgress(content);
-                            this.openApprovalModal(payload);
-                            return;
-                        }
-
-                        if (payload.type === "report") {
-                            reportContent = payload.report || reportContent;
-                            this.updateAIOpsMessage(this.currentAIOpsMessage, reportContent, this.currentAIOpsTrace, false);
-                            syncProgress(reportContent);
-                            continue;
-                        }
-
-                        if (payload.type === "complete") {
-                            const finalReport =
-                                payload.diagnosis?.report || payload.response || reportContent || "诊断已完成。";
-                            this.updateAIOpsMessage(this.currentAIOpsMessage, finalReport, this.currentAIOpsTrace, true);
-                            this.showNotification("AIOps 诊断完成", "success");
-                            return;
-                        }
-
-                        if (payload.type === "error") {
-                            throw new Error(payload.message || "AIOps 诊断失败");
-                        }
+                    for (const block of blocks) {
+                        const payload = this.parseSSEPayload(block);
+                        if (!payload) continue;
+                        const shouldStop = await this.processAIOpsPayload(payload);
+                        if (shouldStop) return;
                     }
                 }
             } finally {
                 reader.releaseLock();
             }
         } catch (error) {
-            const content = `## 诊断失败\n\n${error.message}`;
-            this.updateAIOpsMessage(this.currentAIOpsMessage, content, this.currentAIOpsTrace, false);
-            syncProgress(content);
+            this.ensureAIOpsState().error = error.message || "未知错误";
+            this.addAIOpsStatus(`诊断失败：${error.message}`, "error");
+            this.renderAIOpsProgress();
             this.showNotification(`AIOps 执行失败: ${error.message}`, "error");
         } finally {
             this.isStreaming = false;
@@ -884,9 +1071,16 @@ class SuperBizAgentApp {
             this.showNotification("请等待当前任务结束后再发起新的诊断", "warning");
             return;
         }
+        const userInput = this.messageInput?.value?.trim() || "";
+        const mode = userInput ? "custom" : "default";
+        const task = userInput || "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。";
+        const userMessage = userInput
+            ? userInput
+            : "请执行默认 AIOps 巡检：检查当前系统是否存在活跃告警，并保留完整 Agent Trace。";
 
-        this.addMessage("user", "请开始一次 AIOps 诊断，并保留完整 Agent Trace。");
-        await this.sendAIOpsRequest(false);
+        this.addMessage("user", userMessage);
+        if (this.messageInput) this.messageInput.value = "";
+        await this.sendAIOpsRequest({ resume: false, task, mode });
     }
 
     showLoadingOverlay(visible, title = "", subtitle = "") {

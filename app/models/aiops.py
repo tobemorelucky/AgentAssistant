@@ -13,11 +13,21 @@ class AIOpsRequest(BaseModel):
         default="default",
         description="会话ID，用于追踪诊断历史"
     )
+    task: Optional[str] = Field(
+        default=None,
+        description="诊断任务；为空时使用默认巡检任务",
+    )
+    mode: Optional[str] = Field(
+        default="default",
+        description="诊断模式：default=默认巡检，custom=自定义诊断",
+    )
     
     class Config:
         json_schema_extra = {
             "example": {
-                "session_id": "session-123"
+                "session_id": "session-123",
+                "task": "data-sync-service 出现 HighCPUUsage 告警，请排查",
+                "mode": "custom",
             }
         }
 

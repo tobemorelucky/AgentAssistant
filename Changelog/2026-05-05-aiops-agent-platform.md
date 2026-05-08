@@ -21,6 +21,12 @@
 - 修复前端 `AI Ops` 触发链路，重建 `static/app.js` 的消息渲染、空态切换、SSE 处理与审批续跑逻辑，并为 `/api/aiops` 增加首个初始化状态事件。
 - 修复 AIOps 进行中消息在窗口切换或重绘后丢失的问题：前端现在会把进行中内容和 Trace 一并写入当前会话历史，并在重绘时恢复该消息。
 - 调整前端交互细节：模式下拉切换点击更稳定；空输入点击发送按钮时不再弹出异常提示；当没有任何 Trace 时不再显示 `Agent Trace 0` 面板。
+- 修复上传文本索引时误用多模态 Embedding 模型的问题：新增 `.env` 配置 `DASHSCOPE_EMBEDDING_MODE`、`DASHSCOPE_TEXT_EMBEDDING_MODEL`、`DASHSCOPE_MULTIMODAL_EMBEDDING_MODEL`，并让文本索引、检索、Incident Memory 固定走文本 Embedding 配置。
+- 为文本 Embedding 增加误配保护：如果把视觉/多模态模型填到文本模型位，会直接给出明确配置错误，而不是返回难定位的 OpenAI 兼容 404。
+- Embedding 链路改为支持独立厂商配置：新增 `.env` 配置 `EMBEDDING_API_KEY`、`EMBEDDING_API_BASE`、`TEXT_EMBEDDING_MODEL`、`MULTIMODAL_EMBEDDING_MODEL`，向量模型现在可以与问答模型使用不同的 URL、API Key 和模型厂商。
+- 重构 AIOps 触发逻辑，支持“默认巡检模式”和“自定义诊断模式”：默认模式会先通过 `get_active_alerts` / `list_active_alerts` 获取活跃告警，再围绕最高严重级别告警生成服务级诊断计划；自定义模式则直接使用用户输入任务。
+- 修复前端 AIOps SSE 解析与渲染：兼容 `\n\n` 和 `\r\n\r\n` 分隔，逐条处理 `status`、`trace`、`plan`、`step_complete`、`report`、`verifier_result`、`complete`、`error`，并在浏览器控制台输出 `[AIOps SSE]` 调试日志。
+- 为 monitor mock 增加 `get_active_alerts`、`list_active_alerts`、`query_process_list`、`search_historical_tickets`、`get_service_info`、`list_all_services`，并把活跃告警工具加入 `tool_policy.yaml` 的 `read_only` 分级。
 
 ## 风险与说明
 - 当前未补完整端到端联调；审批续跑、Verifier 触发和评估脚本仍建议在具备完整模型/MCP/向量依赖的环境里再跑一轮真实链路。

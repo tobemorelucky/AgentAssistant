@@ -31,6 +31,10 @@ NODE_EXECUTOR = "executor"
 NODE_REPLANNER = "replanner"
 NODE_VERIFIER = "verifier"
 APPEND_FIELDS = {"past_steps", "trace_events", "tools_used"}
+DEFAULT_AIOPS_TASK = (
+    "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，"
+    "结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。"
+)
 
 
 class AIOpsService:
@@ -60,7 +64,15 @@ class AIOpsService:
             },
         )
         workflow.add_edge(NODE_SKILL_ROUTER, NODE_PLANNER)
-        workflow.add_edge(NODE_PLANNER, NODE_EXECUTOR)
+        workflow.add_conditional_edges(
+            NODE_PLANNER,
+            self._after_planner,
+            {
+                NODE_EXECUTOR: NODE_EXECUTOR,
+                NODE_VERIFIER: NODE_VERIFIER,
+                END: END,
+            },
+        )
         workflow.add_conditional_edges(
             NODE_EXECUTOR,
             self._after_executor,
@@ -99,6 +111,16 @@ class AIOpsService:
         return NODE_REPLANNER
 
     @staticmethod
+    def _after_planner(state: PlanExecuteState) -> str:
+        if state.get("status") == "paused":
+            return END
+        if state.get("response"):
+            return NODE_VERIFIER
+        if state.get("plan"):
+            return NODE_EXECUTOR
+        return END
+
+    @staticmethod
     def _after_replanner(state: PlanExecuteState) -> str:
         if state.get("status") == "paused":
             return END
@@ -126,50 +148,7 @@ class AIOpsService:
                 merged[key] = value
         return merged
 
-    @staticmethod
-    def _build_aiops_task() -> str:
-        return dedent(
-            """诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：
-            ```
-            # 告警分析报告
-
-            ## 活跃告警清单
-            - 告警名称、级别、目标服务、时间窗口、状态
-
-            ## 执行轨迹摘要
-            - 规划步骤
-            - 工具调用摘要
-            - 审批与策略阻断情况
-
-            ## 根因分析
-            - 症状描述
-            - 根因结论
-
-            ## 关键证据
-            - 指标证据
-            - 日志证据
-            - 历史案例证据
-
-            ## 影响范围
-            - 受影响服务
-            - 时间范围
-            - 风险范围
-
-            ## 风险提示
-            - 高风险建议与注意事项
-
-            ## 处理建议
-            - 处理步骤
-            - 后续建议
-            ```
-
-            重要提醒：
-            - 最终输出必须是纯 Markdown 文本，不要包含 JSON 结构
-            - 所有内容必须基于工具查询的真实数据，严禁编造
-            - 如果某个步骤失败，在结论中如实说明，不要跳过"""
-        ).strip()
-
-    def _build_initial_state(self, user_input: str, session_id: str) -> dict[str, Any]:
+    def _build_initial_state(self, user_input: str, session_id: str, mode: str) -> dict[str, Any]:
         snapshot = runtime_store.load_session(session_id)
         pending_payload = runtime_store.load_pending_actions(session_id)
         pending_status = pending_payload.get("status")
@@ -195,6 +174,7 @@ class AIOpsService:
         return {
             "session_id": session_id,
             "input": user_input,
+            "mode": mode,
             "entry_node": NODE_SKILL_ROUTER,
             "status": "running",
             "plan": [],
@@ -206,6 +186,8 @@ class AIOpsService:
             "tools_used": [],
             "verifier_result": {},
             "pending_action": None,
+            "active_alerts": [],
+            "target_alert": None,
         }
 
     @staticmethod
@@ -231,15 +213,27 @@ class AIOpsService:
 
         elif node_name == NODE_PLANNER:
             plan = current_state.get("plan", [])
-            events.append(
-                {
-                    "type": "plan",
-                    "stage": "plan_created",
-                    "message": f"执行计划已制定，共 {len(plan)} 个步骤",
-                    "plan": plan,
-                    "skills": [skill.get("name") for skill in current_state.get("matched_skills", [])],
-                }
-            )
+            if current_state.get("response") and not plan:
+                events.append(
+                    {
+                        "type": "report",
+                        "stage": "inspection_report",
+                        "message": "巡检报告已生成",
+                        "report": current_state.get("response", ""),
+                    }
+                )
+            else:
+                events.append(
+                    {
+                        "type": "plan",
+                        "stage": "plan_created",
+                        "message": f"执行计划已制定，共 {len(plan)} 个步骤",
+                        "plan": plan,
+                        "skills": [skill.get("name") for skill in current_state.get("matched_skills", [])],
+                        "target_alert": current_state.get("target_alert"),
+                        "active_alerts": current_state.get("active_alerts", []),
+                    }
+                )
 
         elif node_name == NODE_EXECUTOR:
             pending_action = node_output.get("pending_action")
@@ -306,10 +300,11 @@ class AIOpsService:
         self,
         user_input: str,
         session_id: str = "default",
+        mode: str = "default",
     ) -> AsyncGenerator[dict[str, Any], None]:
         """Execute the governed Agent workflow."""
         logger.info(f"[会话 {session_id}] 开始执行任务")
-        current_state = self._build_initial_state(user_input, session_id)
+        current_state = self._build_initial_state(user_input, session_id, mode)
 
         if current_state.get("status") == "paused" and current_state.get("pending_action"):
             pending_action = current_state["pending_action"]
@@ -403,15 +398,24 @@ class AIOpsService:
                 "message": f"任务执行出错: {str(exc)}",
             }
 
-    async def diagnose(self, session_id: str = "default") -> AsyncGenerator[dict[str, Any], None]:
+    async def diagnose(
+        self,
+        session_id: str = "default",
+        task: str | None = None,
+        mode: str = "default",
+    ) -> AsyncGenerator[dict[str, Any], None]:
         """Compatibility wrapper for the existing /api/aiops endpoint."""
-        aiops_task = self._build_aiops_task()
+        aiops_task = (task or DEFAULT_AIOPS_TASK).strip()
         yield {
             "type": "status",
             "stage": "workflow_started",
-            "message": "AIOps Agent 已接收诊断请求，正在初始化工作流。",
+            "message": (
+                "AIOps Agent 已接收诊断请求，正在初始化工作流。"
+                if mode == "custom"
+                else "AIOps Agent 已接收默认巡检请求，正在初始化工作流。"
+            ),
         }
-        async for event in self.execute(aiops_task, session_id):
+        async for event in self.execute(aiops_task, session_id, mode=mode):
             if event.get("type") == "complete":
                 yield {
                     "type": "complete",

@@ -10,6 +10,7 @@ class SuperBizAgentApp {
         this.currentAIOpsMessage = null;
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
+        this.currentAIOpsFeedback = null;
         this.pendingApproval = null;
         this.skillDrafts = [];
 
@@ -433,6 +434,13 @@ class SuperBizAgentApp {
         return payload;
     }
 
+    getRenderableTraceEntries(traceEntries = []) {
+        return (Array.isArray(traceEntries) ? traceEntries : []).filter((trace) => {
+            if (!trace || typeof trace !== "object") return false;
+            return trace.node !== "memory";
+        });
+    }
+
     upsertAIOpsProgressMessage(content, traceEntries = []) {
         const payload = {
             type: "assistant",
@@ -456,6 +464,7 @@ class SuperBizAgentApp {
         this.chatMessages.innerHTML = "";
         this.currentAIOpsMessage = null;
         this.currentAIOpsTrace = [];
+        this.currentAIOpsFeedback = null;
 
         this.currentChatHistory.forEach((message) => {
             const element = this.addMessage(message.type, message.content, false, false, message);
@@ -467,6 +476,15 @@ class SuperBizAgentApp {
             }
             if (message.meta === "aiops-final") {
                 element.classList.add("aiops-message");
+                this.currentAIOpsMessage = element;
+                this.currentAIOpsTrace = Array.isArray(message.traceEntries) ? [...message.traceEntries] : [];
+                this.currentAIOpsFeedback = {
+                    sessionId: message.sessionId || this.sessionId,
+                    feedbackStatus: message.feedbackStatus || "pending",
+                    generatedSkillDraft: message.generatedSkillDraft || null,
+                };
+                this.renderTraceTimeline(element, message.traceEntries || []);
+                this.renderAIOpsFeedbackPrompt(element, this.currentAIOpsFeedback);
             }
         });
 
@@ -480,6 +498,7 @@ class SuperBizAgentApp {
         this.currentAIOpsMessage = null;
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
+        this.currentAIOpsFeedback = null;
         this.pendingApproval = null;
         this.renderCurrentConversation();
         this.scrollToBottom();
@@ -493,6 +512,7 @@ class SuperBizAgentApp {
         this.currentAIOpsMessage = null;
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
+        this.currentAIOpsFeedback = null;
         this.pendingApproval = null;
         if (this.messageInput) this.messageInput.value = "";
         this.renderCurrentConversation();
@@ -503,34 +523,46 @@ class SuperBizAgentApp {
 
     renderTraceTimeline(messageElement, traceEntries = []) {
         if (!messageElement) return;
+        const renderableEntries = this.getRenderableTraceEntries(traceEntries);
 
+        let launcher = messageElement.querySelector(".trace-launcher");
         let panel = messageElement.querySelector(".trace-panel");
-        if (!traceEntries.length) {
+        if (!renderableEntries.length) {
+            if (launcher) launcher.remove();
             if (panel) panel.remove();
             return;
+        }
+
+        if (!launcher) {
+            launcher = document.createElement("button");
+            launcher.type = "button";
+            launcher.className = "trace-launcher";
+            messageElement.appendChild(launcher);
         }
 
         if (!panel) {
             panel = document.createElement("div");
             panel.className = "trace-panel";
             panel.innerHTML = `
-                <button class="trace-toggle" type="button">
-                    <span>Agent Trace</span>
-                    <span class="trace-count">0</span>
-                </button>
                 <div class="trace-list"></div>
             `;
             messageElement.appendChild(panel);
-            const toggle = panel.querySelector(".trace-toggle");
-            const list = panel.querySelector(".trace-list");
-            toggle?.addEventListener("click", () => list?.classList.toggle("expanded"));
         }
 
-        panel.querySelector(".trace-count").textContent = `${traceEntries.length}`;
+        launcher.textContent = panel.classList.contains("expanded")
+            ? `收起 Agent Trace (${renderableEntries.length})`
+            : `查看 Agent Trace (${renderableEntries.length})`;
+        launcher.onclick = () => {
+            panel.classList.toggle("expanded");
+            launcher.textContent = panel.classList.contains("expanded")
+                ? `收起 Agent Trace (${renderableEntries.length})`
+                : `查看 Agent Trace (${renderableEntries.length})`;
+        };
+
         const list = panel.querySelector(".trace-list");
         list.innerHTML = "";
 
-        traceEntries.forEach((trace) => {
+        renderableEntries.forEach((trace) => {
             const item = document.createElement("div");
             item.className = `trace-item status-${trace.status || "success"}`;
             const meta = [trace.node, trace.tool_name, trace.duration_ms ? `${trace.duration_ms}ms` : ""]
@@ -565,7 +597,7 @@ class SuperBizAgentApp {
         this.scrollToBottom();
     }
 
-    updateAIOpsMessage(messageElement, response, traceEntries = [], persist = true) {
+    updateAIOpsMessage(messageElement, response, traceEntries = [], persist = true, extraMeta = {}) {
         const target = messageElement || this.addMessage("assistant", response, false, false);
         target.classList.add("aiops-message");
         this.currentAIOpsMessage = target;
@@ -581,7 +613,9 @@ class SuperBizAgentApp {
                 content: response,
                 meta: "aiops-final",
                 sessionId: this.sessionId,
+                traceEntries: [...traceEntries],
                 timestamp: new Date().toISOString(),
+                ...extraMeta,
             };
             const existingIndex = this.currentChatHistory.findIndex(
                 (entry) => entry.type === "assistant" && entry.meta === "aiops-final" && entry.sessionId === this.sessionId,
@@ -592,6 +626,107 @@ class SuperBizAgentApp {
             this.renderChatHistory();
         }
         return target;
+    }
+
+    updateAIOpsFinalHistoryMeta(extraMeta = {}) {
+        const existingIndex = this.currentChatHistory.findIndex(
+            (entry) => entry.type === "assistant" && entry.meta === "aiops-final" && entry.sessionId === this.sessionId,
+        );
+        if (existingIndex < 0) return;
+        this.currentChatHistory[existingIndex] = {
+            ...this.currentChatHistory[existingIndex],
+            ...extraMeta,
+        };
+        this.saveCurrentChat();
+        this.renderChatHistory();
+    }
+
+    renderAIOpsFeedbackPrompt(messageElement, feedback = {}) {
+        if (!messageElement) return;
+
+        const sessionId = feedback.sessionId || this.sessionId;
+        const feedbackStatus = feedback.feedbackStatus || "pending";
+        const generatedSkillDraft = feedback.generatedSkillDraft || null;
+        this.currentAIOpsFeedback = { sessionId, feedbackStatus, generatedSkillDraft };
+
+        let prompt = messageElement.querySelector(".aiops-feedback");
+        if (!prompt) {
+            prompt = document.createElement("div");
+            prompt.className = "aiops-feedback";
+            messageElement.appendChild(prompt);
+        }
+
+        if (feedbackStatus === "helpful") {
+            prompt.innerHTML = `
+                <div class="aiops-feedback-copy">已收到反馈，已标记为有帮助。</div>
+                ${generatedSkillDraft ? `<div class="aiops-feedback-note">已生成 Skill 草稿。</div>` : ""}
+            `;
+            return;
+        }
+
+        if (feedbackStatus === "not_helpful") {
+            prompt.innerHTML = `<div class="aiops-feedback-copy">已收到反馈，暂不生成 Skill 草稿。</div>`;
+            return;
+        }
+
+        prompt.innerHTML = `
+            <div class="aiops-feedback-copy">请问是否帮助到您？</div>
+            <div class="aiops-feedback-actions">
+                <button type="button" class="aiops-feedback-btn" data-feedback="yes">是</button>
+                <button type="button" class="aiops-feedback-btn secondary" data-feedback="no">否</button>
+            </div>
+        `;
+
+        prompt.querySelector('[data-feedback="yes"]')?.addEventListener("click", () => {
+            this.submitAIOpsFeedback(sessionId, true, prompt);
+        });
+        prompt.querySelector('[data-feedback="no"]')?.addEventListener("click", () => {
+            this.submitAIOpsFeedback(sessionId, false, prompt);
+        });
+    }
+
+    async submitAIOpsFeedback(sessionId, helpful, promptElement) {
+        const buttons = Array.from(promptElement?.querySelectorAll("button") || []);
+        buttons.forEach((button) => {
+            button.disabled = true;
+        });
+
+        try {
+            const response = await fetch("/api/agent/session-feedback", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    session_id: sessionId,
+                    helpful,
+                    operator: "frontend-user",
+                    comment: helpful ? "helpful from web ui" : "not helpful from web ui",
+                }),
+            });
+            const data = await response.json();
+            if (!response.ok || data.code !== 200) {
+                throw new Error(data.detail || data.message || `HTTP ${response.status}`);
+            }
+
+            const feedbackStatus = helpful ? "helpful" : "not_helpful";
+            const generatedSkillDraft = data.data?.generated_skill_draft || null;
+            this.updateAIOpsFinalHistoryMeta({ feedbackStatus, generatedSkillDraft });
+            this.renderAIOpsFeedbackPrompt(this.currentAIOpsMessage, {
+                sessionId,
+                feedbackStatus,
+                generatedSkillDraft,
+            });
+            if (helpful && generatedSkillDraft) {
+                this.showNotification("已生成 Skill 草稿", "success");
+                await this.loadSkillDrafts();
+            } else {
+                this.showNotification("已收到反馈", "success");
+            }
+        } catch (error) {
+            buttons.forEach((button) => {
+                button.disabled = false;
+            });
+            this.showNotification(`提交反馈失败: ${error.message}`, "error");
+        }
     }
 
     async sendQuickMessage(message) {
@@ -929,7 +1064,21 @@ class SuperBizAgentApp {
                 "诊断已完成。";
             this.ensureAIOpsState().report = finalReport;
             this.addAIOpsStatus("AIOps 诊断完成。", "complete");
-            this.renderAIOpsProgress({ final: true, persistFinal: true });
+            this.updateAIOpsMessage(
+                this.currentAIOpsMessage,
+                this.buildAIOpsMarkdown({ final: true }),
+                this.currentAIOpsTrace,
+                true,
+                {
+                    feedbackStatus: "pending",
+                    generatedSkillDraft: null,
+                },
+            );
+            this.renderAIOpsFeedbackPrompt(this.currentAIOpsMessage, {
+                sessionId: this.sessionId,
+                feedbackStatus: "pending",
+                generatedSkillDraft: null,
+            });
             this.showNotification("AIOps 诊断完成", "success");
             return true;
         }

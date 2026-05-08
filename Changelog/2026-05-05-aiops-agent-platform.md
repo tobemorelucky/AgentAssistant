@@ -27,6 +27,9 @@
 - 重构 AIOps 触发逻辑，支持“默认巡检模式”和“自定义诊断模式”：默认模式会先通过 `get_active_alerts` / `list_active_alerts` 获取活跃告警，再围绕最高严重级别告警生成服务级诊断计划；自定义模式则直接使用用户输入任务。
 - 修复前端 AIOps SSE 解析与渲染：兼容 `\n\n` 和 `\r\n\r\n` 分隔，逐条处理 `status`、`trace`、`plan`、`step_complete`、`report`、`verifier_result`、`complete`、`error`，并在浏览器控制台输出 `[AIOps SSE]` 调试日志。
 - 为 monitor mock 增加 `get_active_alerts`、`list_active_alerts`、`query_process_list`、`search_historical_tickets`、`get_service_info`、`list_all_services`，并把活跃告警工具加入 `tool_policy.yaml` 的 `read_only` 分级。
+- 调整前端 Agent Trace 可视化：默认仍保留完整 trace 数据，但不再把 `memory` 节点计入可见 Trace 时间线和计数，避免最终报告已经输出后计数仍继续增长的困惑。
+- 调整前端 Agent Trace 交互：Trace 面板默认不展开，只保留“查看 Agent Trace”按钮，点击后才显示详细时间线。
+- 调整 Skill Draft 生成时机：诊断完成后只保存 incident memory，不再自动生成草稿；前端会在最终报告底部显示“请问是否帮助到您（是/否）”，只有点击“是”时才通过 `/api/agent/session-feedback` 触发 Skill Draft 生成。
 
 ## 风险与说明
 - 当前未补完整端到端联调；审批续跑、Verifier 触发和评估脚本仍建议在具备完整模型/MCP/向量依赖的环境里再跑一轮真实链路。

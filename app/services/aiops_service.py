@@ -21,7 +21,6 @@ from app.agent.aiops import (
 )
 from app.agent.aiops.incident_memory import append_incident, build_incident_record
 from app.agent.aiops.runtime_store import runtime_store
-from app.agent.aiops.skill_draft_generator import generate_skill_draft
 from app.agent.aiops.trace import append_trace_event, create_trace_event
 
 
@@ -188,6 +187,9 @@ class AIOpsService:
             "pending_action": None,
             "active_alerts": [],
             "target_alert": None,
+            "incident_record": {},
+            "feedback": {},
+            "generated_skill_draft": None,
         }
 
     @staticmethod
@@ -352,6 +354,7 @@ class AIOpsService:
             runtime_store.clear_pending_actions(session_id)
             incident_record = build_incident_record(current_state)
             append_incident(incident_record)
+            current_state["incident_record"] = incident_record
             memory_trace = create_trace_event(
                 session_id=session_id,
                 node="memory",
@@ -361,17 +364,6 @@ class AIOpsService:
             )
             append_trace_event(session_id, memory_trace)
             yield {"type": "trace", "stage": "memory", "trace": memory_trace}
-
-            draft_path = generate_skill_draft(incident_record)
-            draft_trace = create_trace_event(
-                session_id=session_id,
-                node="memory",
-                status="success",
-                title="Skill draft generated",
-                result_summary=draft_path,
-            )
-            append_trace_event(session_id, draft_trace)
-            yield {"type": "trace", "stage": "memory", "trace": draft_trace}
 
             runtime_store.save_session(session_id, current_state, "completed")
             yield {

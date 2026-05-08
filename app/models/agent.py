@@ -60,3 +60,12 @@ class SkillDraftDetail(BaseModel):
     content: str
     description: str = ""
     updated_at: str
+
+
+class SessionFeedbackRequest(BaseModel):
+    """Helpful feedback request for a completed AIOps session."""
+
+    session_id: str = Field(..., description="Session ID")
+    helpful: bool = Field(False, description="Whether the diagnosis was helpful")
+    operator: str = Field("anonymous", description="Operator name")
+    comment: str = Field("", description="Optional feedback comment")

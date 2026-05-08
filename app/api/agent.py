@@ -8,11 +8,12 @@ from loguru import logger
 
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.skill_draft_generator import (
+    generate_skill_draft,
     delete_skill_draft,
     enable_skill_draft,
     list_skill_drafts,
 )
-from app.models.agent import AgentActionRequest
+from app.models.agent import AgentActionRequest, SessionFeedbackRequest
 
 
 router = APIRouter(prefix="/api/agent")
@@ -121,3 +122,42 @@ async def remove_draft(draft_name: str):
     except Exception as exc:
         logger.error(f"删除 Skill draft 失败: {exc}")
         raise HTTPException(status_code=500, detail=str(exc)) from exc
+
+
+@router.post("/session-feedback")
+async def submit_session_feedback(request: SessionFeedbackRequest):
+    """Persist helpful feedback and optionally generate a skill draft."""
+    snapshot = runtime_store.load_session(request.session_id)
+    if not snapshot or not snapshot.get("state"):
+        raise HTTPException(status_code=404, detail=f"Session not found: {request.session_id}")
+
+    state = snapshot["state"]
+    feedback_payload = {
+        "helpful": request.helpful,
+        "operator": request.operator,
+        "comment": request.comment,
+    }
+    state["feedback"] = feedback_payload
+
+    generated_draft = state.get("generated_skill_draft")
+    incident_record = state.get("incident_record")
+
+    if request.helpful and incident_record and not generated_draft:
+        generated_draft = generate_skill_draft(incident_record)
+        state["generated_skill_draft"] = generated_draft
+
+    runtime_store.save_session(
+        request.session_id,
+        state,
+        snapshot.get("status", "completed"),
+    )
+
+    return {
+        "code": 200,
+        "message": "success",
+        "data": {
+            "session_id": request.session_id,
+            "helpful": request.helpful,
+            "generated_skill_draft": generated_draft,
+        },
+    }

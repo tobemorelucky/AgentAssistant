@@ -17,6 +17,7 @@ from app.agent.aiops import (
     skill_router,
     verifier,
 )
+from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
 from app.agent.aiops.incident_memory import append_incident, build_incident_record
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.trace import append_trace_event, create_trace_event
@@ -208,6 +209,43 @@ class AIOpsService:
             return f"共 {len(parsed)} 项结果"
 
         return str(parsed)[:200]
+
+    @staticmethod
+    def _summarize_step_result(result: Any) -> str:
+        parsed = unwrap_structured_payload(result)
+
+        if isinstance(parsed, str):
+            text = parsed.strip()
+            return text[:240] if text else ""
+
+        if isinstance(parsed, dict):
+            if {"usage_percent", "used_gb", "total_gb", "available_gb"} & set(parsed.keys()):
+                return summarize_disk_tool_result("get_disk_usage", parsed)[:240]
+            if "directories" in parsed and isinstance(parsed["directories"], list):
+                return summarize_disk_tool_result("list_large_directories", parsed)[:240]
+            if "files" in parsed and isinstance(parsed["files"], list):
+                first = parsed["files"][0] if parsed["files"] else {}
+                if isinstance(first, dict) and ("process" in first or "process_name" in first):
+                    return summarize_disk_tool_result("query_deleted_open_files", parsed)[:240]
+                return summarize_disk_tool_result("list_large_files", parsed)[:240]
+            if {"images_gb", "containers_gb", "volumes_gb", "build_cache_gb"} & set(parsed.keys()):
+                return summarize_disk_tool_result("query_docker_disk_usage", parsed)[:240]
+            if {"safe", "need_approval", "forbidden"} & set(parsed.keys()):
+                return summarize_disk_tool_result("get_disk_cleanup_candidates", parsed)[:240]
+            preferred_keys = ["message", "service_name", "alert_name", "status", "total"]
+            fragments = [f"{key}={parsed[key]}" for key in preferred_keys if key in parsed]
+            if fragments:
+                return " | ".join(fragments)[:240]
+            filtered = {k: v for k, v in parsed.items() if k not in {"type", "test", "data"}}
+            return json.dumps(filtered, ensure_ascii=False)[:240]
+
+        if isinstance(parsed, list):
+            if parsed and isinstance(parsed[0], dict) and parsed[0].get("path"):
+                preview = ", ".join(str(item.get("path")) for item in parsed[:3] if isinstance(item, dict))
+                return f"结果包含 {len(parsed)} 项：{preview}"[:240]
+            return f"结果包含 {len(parsed)} 项"[:240]
+
+        return str(parsed)[:240]
 
     def _build_initial_state(self, user_input: str, session_id: str, mode: str) -> dict[str, Any]:
         snapshot = runtime_store.load_session(session_id)

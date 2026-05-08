@@ -7,6 +7,10 @@ from typing import Any
 from loguru import logger
 from pydantic import BaseModel, Field
 
+from app.agent.aiops.disk_cleanup import (
+    build_disk_verifier_findings,
+    is_disk_cleanup_request,
+)
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
 from app.config import config
@@ -29,7 +33,24 @@ class VerifierOutput(BaseModel):
     risk_warnings: list[str] = Field(default_factory=list)
 
 
+def _disk_verify(state: PlanExecuteState) -> VerifierOutput:
+    findings, suggested, missing, warnings = build_disk_verifier_findings(
+        state.get("response", ""),
+        state.get("past_steps", []),
+    )
+    return VerifierOutput(
+        passed=not findings,
+        findings=findings,
+        suggested_next_steps=suggested,
+        missing_evidence=missing,
+        risk_warnings=warnings,
+    )
+
+
 def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
+    if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
+        return _disk_verify(state)
+
     response = state.get("response", "")
     past_steps = state.get("past_steps", [])
     active_alerts = state.get("active_alerts", [])
@@ -38,39 +59,29 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     missing: list[str] = []
     warnings: list[str] = []
 
-    if (
-        state.get("mode") == "default"
-        and not active_alerts
-        and "当前未检测到活跃告警" in response
-    ):
-        return VerifierOutput(
-            passed=True,
-            findings=[],
-            suggested_next_steps=[],
-            missing_evidence=[],
-            risk_warnings=[],
-        )
+    if state.get("mode") == "default" and not active_alerts and "未检测到活跃告警" in response:
+        return VerifierOutput()
 
     if len(past_steps) < 2:
-        findings.append("执行步骤过少，证据覆盖不足。")
-        suggested.append("补充至少一次指标查询和一次日志或历史案例查询。")
-        missing.append("跨来源证据")
+        findings.append("执行步骤过少，缺少支撑结论的工具证据。")
+        suggested.append("补充至少两步工具证据，再生成诊断报告。")
+        missing.append("执行步骤")
 
     lowered = response.lower()
     if "根因" in response and "证据" not in response:
-        findings.append("报告包含根因结论，但未明确标出证据。")
-        suggested.append("补充日志、指标或历史案例证据。")
-        missing.append("根因证据")
+        findings.append("报告提到了根因，但没有明确对应证据。")
+        suggested.append("补充关键证据段落，并将证据与根因关联。")
+        missing.append("关键证据")
 
-    if "影响" not in response and "范围" not in response:
+    if "影响范围" not in response:
         findings.append("报告缺少影响范围说明。")
-        suggested.append("补充受影响服务、时间窗口和风险范围。")
+        suggested.append("补充受影响主机、服务或业务范围。")
         missing.append("影响范围")
 
-    if any(keyword in lowered for keyword in ["重启", "扩容", "kill", "删除"]) and "风险" not in response:
-        findings.append("存在高风险建议但未给出风险提示。")
-        suggested.append("补充高风险操作的回滚条件和风险提示。")
-        warnings.append("高风险建议缺少风险说明")
+    if any(keyword in lowered for keyword in ["删除", "kill", "prune"]) and "风险" not in response:
+        findings.append("报告包含高风险建议，但缺少风险提示。")
+        suggested.append("为高风险建议补充风险说明和人工确认要求。")
+        warnings.append("存在高风险操作建议")
 
     return VerifierOutput(
         passed=not findings,
@@ -83,34 +94,36 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
 
 async def verifier(state: PlanExecuteState) -> dict[str, Any]:
     """LangGraph node: verify whether the report is evidence-backed."""
-    logger.info("=== Verifier：检查报告可信度 ===")
+    logger.info("=== Verifier ===")
     session_id = state.get("session_id", "default")
     response = state.get("response", "")
     past_steps = state.get("past_steps", [])
 
     result: VerifierOutput
-    if ChatQwen and ChatPromptTemplate and config.dashscope_api_key and response.strip():
+    if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
+        result = _disk_verify(state)
+    elif ChatQwen and ChatPromptTemplate and config.dashscope_api_key and response.strip():
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
                     "system",
-                    "你是 AIOps Verifier。检查报告是否有证据支撑、是否存在无根据猜测、"
-                    "是否说明影响范围、是否包含高风险建议但缺少风险提示。"
-                    "如果不通过，请提供 suggested_next_steps。",
+                    (
+                        "You are an AIOps verifier. Check whether the report is backed by tool evidence, "
+                        "avoids unsupported guesses, covers impact scope, and adds risk warnings for high-risk suggestions. "
+                        "If it fails, return concise suggested_next_steps."
+                    ),
                 ),
-                ("user", "原始任务:\n{task}\n\n执行历史:\n{history}\n\n待验证报告:\n{report}"),
+                ("user", "Task:\n{task}\n\nExecution history:\n{history}\n\nReport:\n{report}"),
             ]
         )
         llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
         chain = prompt | llm.with_structured_output(VerifierOutput)
-        history_text = "\n\n".join(
-            f"步骤: {step}\n结果: {result_text}" for step, result_text in past_steps
-        )
+        history_text = "\n\n".join(f"Step: {step}\nResult: {result_text}" for step, result_text in past_steps)
         try:
             result = await chain.ainvoke(
                 {
                     "task": state.get("input", ""),
-                    "history": history_text or "无",
+                    "history": history_text or "(empty)",
                     "report": response,
                 }
             )

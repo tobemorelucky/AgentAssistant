@@ -611,6 +611,8 @@ def get_disk_usage(hostname: Optional[str] = None, mount: str = "/") -> Dict[str
     if hostname:
         disk_usage["host"] = hostname
     disk_usage["mount"] = mount or disk_usage.get("mount", "/")
+    usage_percent = float(disk_usage.get("usage_percent", 0))
+    disk_usage["status"] = "critical" if usage_percent >= 90 else "warning" if usage_percent >= 80 else "healthy"
     return disk_usage
 
 
@@ -619,7 +621,20 @@ def get_disk_usage(hostname: Optional[str] = None, mount: str = "/") -> Dict[str
 def list_large_directories(path: str = "/", limit: int = 10) -> Dict[str, Any]:
     """Return the top large directories from mock data."""
     payload = _load_disk_mock_data()
-    directories = list(payload.get("large_directories", []) or [])[:limit]
+    reason_map = {
+        "/var/log": "业务日志与归档日志堆积",
+        "/var/lib/docker": "Docker 镜像、卷或构建缓存占用",
+        "/tmp": "临时文件未定期清理",
+        "/app/cache": "应用缓存未过期或未淘汰",
+    }
+    directories = []
+    for item in list(payload.get("large_directories", []) or [])[:limit]:
+        directory = dict(item)
+        directory["reason"] = directory.get("reason") or reason_map.get(
+            str(directory.get("path", "")),
+            "目录占用偏高，需要进一步核查内容组成",
+        )
+        directories.append(directory)
     return {
         "path": path,
         "limit": limit,
@@ -634,7 +649,25 @@ def list_large_files(path: str = "/", min_size_mb: int = 100, limit: int = 20) -
     payload = _load_disk_mock_data()
     files = list(payload.get("large_files", []) or [])
     min_size_gb = round(min_size_mb / 1024, 3)
-    filtered = [item for item in files if float(item.get("size_gb", 0)) >= min_size_gb]
+    filtered = []
+    for item in files:
+        if float(item.get("size_gb", 0)) < min_size_gb:
+            continue
+        file_item = dict(item)
+        file_path = str(file_item.get("path", ""))
+        if "safe_action" not in file_item:
+            file_item["safe_action"] = (
+                "先确认日志保留策略，再执行轮转、压缩或归档"
+                if file_path.lower().endswith(".log")
+                else "需要结合业务影响评估后再处理"
+            )
+        if "risk" not in file_item:
+            file_item["risk"] = (
+                "直接删除可能影响审计、排障或业务写入"
+                if file_path.lower().endswith(".log")
+                else "需要确认文件是否被在线业务依赖"
+            )
+        filtered.append(file_item)
     return {
         "path": path,
         "min_size_mb": min_size_mb,
@@ -648,7 +681,18 @@ def list_large_files(path: str = "/", min_size_mb: int = 100, limit: int = 20) -
 def query_deleted_open_files() -> Dict[str, Any]:
     """Return deleted-but-still-open files from mock data."""
     payload = _load_disk_mock_data()
-    files = list(payload.get("deleted_open_files", []) or [])
+    files = []
+    for item in list(payload.get("deleted_open_files", []) or []):
+        file_item = dict(item)
+        process_name = file_item.get("process") or file_item.get("process_name") or ""
+        file_item["process"] = process_name
+        file_item["file"] = file_item.get("file") or file_item.get("path")
+        file_item["suggestion"] = file_item.get("suggestion") or (
+            f"在业务低峰平滑重启 {process_name}，释放已删除但未归还的磁盘空间"
+            if process_name
+            else "确认句柄所属进程后再安排平滑重启释放空间"
+        )
+        files.append(file_item)
     return {
         "files": files,
         "total": len(files),
@@ -668,7 +712,26 @@ def query_docker_disk_usage() -> Dict[str, Any]:
 def get_disk_cleanup_candidates() -> Dict[str, Any]:
     """Return structured cleanup candidates from mock data."""
     payload = _load_disk_mock_data()
-    return dict(payload.get("cleanup_candidates", {}))
+    data = dict(payload.get("cleanup_candidates", {}))
+
+    def normalize(items: Any, needs_reason: bool = False) -> list[dict[str, Any]]:
+        normalized_items = []
+        for item in items if isinstance(items, list) else []:
+            if not isinstance(item, dict):
+                continue
+            entry = dict(item)
+            if needs_reason:
+                entry["reason"] = entry.get("reason") or "高风险或禁止自动执行"
+            else:
+                entry["suggestion"] = entry.get("suggestion") or "需要人工确认后再执行"
+            normalized_items.append(entry)
+        return normalized_items
+
+    return {
+        "safe": normalize(data.get("safe")),
+        "need_approval": normalize(data.get("need_approval")),
+        "forbidden": normalize(data.get("forbidden"), needs_reason=True),
+    }
 
 
 if __name__ == "__main__":

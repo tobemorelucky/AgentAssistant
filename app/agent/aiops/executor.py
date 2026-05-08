@@ -16,6 +16,8 @@ from app.agent.aiops.disk_cleanup import (
     DISK_TOOL_ARGS,
     extract_disk_tool_name,
     is_disk_cleanup_request,
+    normalize_disk_tool_result,
+    summarize_disk_tool_result,
 )
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.tool_policy import check_tool_policy
@@ -41,9 +43,11 @@ async def _execute_tool_directly(
     started_at = _now_iso()
     started_ts = time.perf_counter()
     tool_result = await invoke_tool(tool, args)
+    normalized_result = normalize_disk_tool_result(tool_name, tool_result)
     duration_ms = int((time.perf_counter() - started_ts) * 1000)
     ended_at = _now_iso()
-    result_text = json.dumps(tool_result, ensure_ascii=False, indent=2)
+    result_text = json.dumps(normalized_result, ensure_ascii=False, indent=2)
+    result_summary = summarize_disk_tool_result(tool_name, normalized_result)
     return {
         "plan": [],
         "status": "running",
@@ -57,7 +61,7 @@ async def _execute_tool_directly(
                 title=f"Executed {tool_name}",
                 tool_name=tool_name,
                 tool_args=args,
-                result_summary=summarize_result(tool_result),
+                result_summary=result_summary,
                 started_at=started_at,
                 ended_at=ended_at,
                 duration_ms=duration_ms,
@@ -68,7 +72,7 @@ async def _execute_tool_directly(
                 node="executor",
                 status="success",
                 title="Disk evidence step executed",
-                result_summary=f"{tool_name} completed",
+                result_summary=result_summary,
             ),
         ],
     }

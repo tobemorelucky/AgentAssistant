@@ -42,3 +42,5 @@
 - 清理前端摘要展示：执行步骤摘要和 Trace 参数现在会过滤掉 `type`、`test`、`data` 等原始结构噪声，优先展示磁盘使用率、Top 目录、大文件、Docker 占用等更可读的摘要信息。
 - 调整 AIOps 报告卡片布局：限制横向溢出，强化 `pre`/表格/Trace 的自动换行与纵向排列，避免页面在报告较长时出现左右拖拽；同时固定 `查看 Agent Trace` 在上、`是否帮助到您` 反馈区在下的顺序。
 - 新增 `.env` 配置 `AIOPS_MAX_STEPS=8`，并接入后端 `replanner` 的最大执行步数控制，便于按环境调整诊断深度。
+- 修复 `disk_cleanup` AIOps 链路中的证据解析问题：Executor 现在会把 MCP 文本块结果先还原成结构化 JSON，再对 `get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates` 生成字段级摘要，避免前端只看到“共 1 项结果”。
+- 重写磁盘诊断报告生成与 Verifier 规则：报告不再输出 `unknown%` / `unknownGB` 占位，而是基于真实工具证据输出具体数值；缺失字段会明确写成“该字段未返回”；Verifier 对 `unknown`、证据与结论矛盾、Docker/目录/文件证据不足、cleanup_candidates 为空等情况会直接判定不通过。

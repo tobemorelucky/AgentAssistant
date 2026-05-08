@@ -1,0 +1,179 @@
+{
+  "session_id": "session-1778243885384-v4l4f4",
+  "status": "running",
+  "updated_at": "2026-05-08T13:06:02.993922+00:00",
+  "state": {
+    "session_id": "session-1778243885384-v4l4f4",
+    "input": "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。",
+    "mode": "default",
+    "entry_node": "skill_router",
+    "status": "running",
+    "plan": [
+      "调用 get_service_info 获取 data-sync-service 的服务拓扑、实例和依赖信息，确认告警实例 data-sync-service-01 的上下文。",
+      "调用 query_cpu_metrics 查询 data-sync-service 最近 12m 的 CPU 指标，核对 HighCPUUsage 是否与 CPU 上升一致。",
+      "调用 query_memory_metrics 查询 data-sync-service 的内存趋势，排除资源争用或内存压力共同触发的情况。",
+      "调用 query_process_list 查看 data-sync-service 各实例进程占用，定位是否为单实例热点或异常进程。",
+      "调用 search_historical_tickets 检索 data-sync-service 与 HighCPUUsage 相关历史工单，参考已有根因与处置经验。",
+      "调用 retrieve_knowledge 检索 data-sync-service / HighCPUUsage 对应 runbook，补充修复建议与风险提示。"
+    ],
+    "past_steps": [],
+    "response": "",
+    "matched_skills": [],
+    "similar_incidents": [
+      {
+        "session_id": "session-1778215844721-9r6a8f",
+        "user_task": "诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：\n            ```\n            # 告警分析报告\n\n            ## 活跃告警清单\n            - 告警名称、级别、目标服务、时间窗口、状态\n\n            ## 执行轨迹摘要\n            - 规划步骤\n            - 工具调用摘要\n            - 审批与策略阻断情况\n\n            ## 根因分析\n            - 症状描述\n            - 根因结论\n\n            ## 关键证据\n            - 指标证据\n            - 日志证据\n            - 历史案例证据\n\n            ## 影响范围\n            - 受影响服务\n            - 时间范围\n            - 风险范围\n\n            ## 风险提示\n            - 高风险建议与注意事项\n\n            ## 处理建议\n            - 处理步骤\n            - 后续建议\n            ```\n\n            重要提醒：\n            - 最终输出必须是纯 Markdown 文本，不要包含 JSON 结构\n            - 所有内容必须基于工具查询的真实数据，严禁编造\n            - 如果某个步骤失败，在结论中如实说明，不要跳过",
+        "matched_skills": [],
+        "tools_used": [
+          "get_current_timestamp",
+          "retrieve_knowledge"
+        ],
+        "root_cause": "# 告警分析报告\n\n## 活跃告警清单\n- **状态说明**：由于系统连接错误（步骤2、步骤3）及请求超时（步骤4），**未能成功获取任何活跃告警数据**。\n- **详细列表**：无数据可用。\n  - *原因*：`search_topic_by_service_name` 和 `search_log` 工具执行失败，导致无法识别当前存在的告警名称、级别、目标服务等信息。\n\n## 执行轨迹摘要\n- **规划步骤**：\n  1. 获取当前时间戳以确定查询窗口。\n  2. 搜索相关",
+        "score": 0.7168
+      },
+      {
+        "session_id": "debug-aiops-001",
+        "user_task": "诊断当前系统是否存在告警，如果存在告警请详细分析告警原因并生成诊断报告，诊断报告输出格式要求：\n            ```\n            # 告警分析报告\n\n            ## 活跃告警清单\n            - 告警名称、级别、目标服务、时间窗口、状态\n\n            ## 执行轨迹摘要\n            - 规划步骤\n            - 工具调用摘要\n            - 审批与策略阻断情况\n\n            ## 根因分析\n            - 症状描述\n            - 根因结论\n\n            ## 关键证据\n            - 指标证据\n            - 日志证据\n            - 历史案例证据\n\n            ## 影响范围\n            - 受影响服务\n            - 时间范围\n            - 风险范围\n\n            ## 风险提示\n            - 高风险建议与注意事项\n\n            ## 处理建议\n            - 处理步骤\n            - 后续建议\n            ```\n\n            重要提醒：\n            - 最终输出必须是纯 Markdown 文本，不要包含 JSON 结构\n            - 所有内容必须基于工具查询的真实数据，严禁编造\n            - 如果某个步骤失败，在结论中如实说明，不要跳过",
+        "matched_skills": [],
+        "tools_used": [
+          "get_current_timestamp",
+          "search_topic_by_service_name",
+          "get_current_timestamp",
+          "get_current_timestamp"
+        ],
+        "root_cause": "# 告警分析报告\n\n## 活跃告警清单\n- **检测结果**：未检测到活跃告警\n- **说明**：在当前会话执行过程中，步骤2（搜索日志主题）和步骤4（查询告警日志）均未返回有效数据。系统未能检索到包含 'alert'、'alarm' 或 'warning' 关键词的日志主题，也未获取到具体的告警日志记录。因此，无法列出活跃的告警名称、级别、目标服务、时间窗口及状态。\n\n## 执行轨迹摘要\n- **规划步骤**：\n    1. 获取当前时间戳以确定查询窗口（最近30分钟）。\n",
+        "score": 0.7137
+      },
+      {
+        "session_id": "session-1778237909104-f5d4s1",
+        "user_task": "服务器磁盘使用率过高，怀疑硬盘满了，检查一下",
+        "matched_skills": [
+          "disk_cleanup"
+        ],
+        "tools_used": [
+          "get_disk_usage",
+          "list_large_directories",
+          "list_large_files",
+          "query_deleted_open_files",
+          "query_docker_disk_usage",
+          "get_disk_cleanup_candidates",
+          "retrieve_knowledge"
+        ],
+        "root_cause": "# AIOps 磁盘清理诊断报告\n\n        ## 用户任务\n        - 服务器磁盘使用率过高，怀疑硬盘满了，检查一下\n\n        ## 磁盘使用率证据\n        - 主机 `demo-server-01` 的挂载点 `/` 当前使用率为 **unknown%**。\n        - 已使用 **unknownGB / unknownGB**，剩余可用空间仅 **unknownGB**。\n        - 这已经属于高水位状态，若继续增长，容易触",
+        "score": 0.5686
+      }
+    ],
+    "trace_events": [
+      {
+        "trace_id": "7ada2314-400b-4ede-9ae2-1fe7bad82db5",
+        "session_id": "session-1778243885384-v4l4f4",
+        "node": "skill_router",
+        "status": "success",
+        "title": "Matched 0 skills",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "No skills matched",
+        "started_at": "2026-05-08T13:06:00.276948+00:00",
+        "ended_at": "2026-05-08T13:06:00.276948+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "matched_skills": []
+        }
+      },
+      {
+        "trace_id": "9d48b848-e897-4eae-ab97-3d01a7afc8d0",
+        "session_id": "session-1778243885384-v4l4f4",
+        "node": "tool_call",
+        "status": "success",
+        "title": "Fetched active alerts for patrol",
+        "tool_name": "get_active_alerts",
+        "tool_args": {
+          "include_resolved": false
+        },
+        "result_summary": "{\"active_alerts\": \"[\\\"{\\\\\\\"alert_name\\\\\\\": \\\\\\\"HighCPUUsage\\\\\\\", \\\\\\\"severity\\\\\\\": \\\\\\\"critical\\\\\\\", \\\\\\\"service_name\\\\\\\": \\\\\\\"data-sync-service\\\\\\\", \\\\\\\"instance\\\\\\\": \\\\\\\"data-sync-service-01\\\\\\\", \\\\\\\"duration\\\\\\\": \\\\\\\"12m\\\\\\\", \\\\\\\"description\\\\\\\": \\\\\\\"CPU 使用率持续超过 80%\\\\\\\"}\\\"]\", \"total\": \"1\", \"include_resolved\": \"False\", \"message\": \"已返回 mock 活跃告警列表\"}",
+        "started_at": "2026-05-08T13:06:02.992572+00:00",
+        "ended_at": "2026-05-08T13:06:02.992572+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "active_alert_count": 1,
+          "target_alert": {
+            "alert_name": "HighCPUUsage",
+            "severity": "critical",
+            "service_name": "data-sync-service",
+            "instance": "data-sync-service-01",
+            "duration": "12m",
+            "description": "CPU 使用率持续超过 80%",
+            "status": "firing",
+            "source": "mock-monitor"
+          },
+          "source": "planner"
+        }
+      },
+      {
+        "trace_id": "8b16e7c1-36a8-4151-a588-9cc5e564fa31",
+        "session_id": "session-1778243885384-v4l4f4",
+        "node": "planner",
+        "status": "success",
+        "title": "Default patrol plan for data-sync-service",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "调用 get_service_info 获取 data-sync-service 的服务拓扑、实例和依赖信息，确认告警实例 data-sync-service-01 的上下文。 | 调用 query_cpu_metrics 查询 data-sync-service 最近 12m 的 CPU 指标，核对 HighCPUUsage 是否与 CPU 上升一致。 | 调用 query_memory_metrics 查询 data-sync-service 的内存趋势，排除资源争用或内存压力共同触发的情况。",
+        "started_at": "2026-05-08T13:06:02.992596+00:00",
+        "ended_at": "2026-05-08T13:06:02.992596+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "active_alerts": [
+            {
+              "alert_name": "HighCPUUsage",
+              "severity": "critical",
+              "service_name": "data-sync-service",
+              "instance": "data-sync-service-01",
+              "duration": "12m",
+              "description": "CPU 使用率持续超过 80%",
+              "status": "firing",
+              "source": "mock-monitor"
+            }
+          ],
+          "target_alert": {
+            "alert_name": "HighCPUUsage",
+            "severity": "critical",
+            "service_name": "data-sync-service",
+            "instance": "data-sync-service-01",
+            "duration": "12m",
+            "description": "CPU 使用率持续超过 80%",
+            "status": "firing",
+            "source": "mock-monitor"
+          }
+        }
+      }
+    ],
+    "tools_used": [],
+    "verifier_result": {},
+    "pending_action": null,
+    "active_alerts": [
+      {
+        "alert_name": "HighCPUUsage",
+        "severity": "critical",
+        "service_name": "data-sync-service",
+        "instance": "data-sync-service-01",
+        "duration": "12m",
+        "description": "CPU 使用率持续超过 80%",
+        "status": "firing",
+        "source": "mock-monitor"
+      }
+    ],
+    "target_alert": {
+      "alert_name": "HighCPUUsage",
+      "severity": "critical",
+      "service_name": "data-sync-service",
+      "instance": "data-sync-service-01",
+      "duration": "12m",
+      "description": "CPU 使用率持续超过 80%",
+      "status": "firing",
+      "source": "mock-monitor"
+    },
+    "incident_record": {},
+    "feedback": {},
+    "generated_skill_draft": null
+  }
+}

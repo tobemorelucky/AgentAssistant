@@ -1,509 +1,387 @@
 # SuperBizAgent
 
-> 企业级智能对话和运维助手，支持 RAG 知识库问答和 AIOps 智能诊断
+一个基于 `FastAPI + LangGraph + MCP + Milvus` 的 Agent Assistant 项目，包含两条主要能力：
 
-[![Python](https://img.shields.io/badge/Python-3.10+-blue.svg)](https://www.python.org/)
-[![FastAPI](https://img.shields.io/badge/FastAPI-0.109+-green.svg)](https://fastapi.tiangolo.com/)
-[![LangChain](https://img.shields.io/badge/LangChain-latest-orange.svg)](https://www.langchain.com/)
+- 普通 RAG 对话：面向知识问答与文档检索
+- AIOps Agent：面向巡检、告警诊断、证据采集、风险提示与经验沉淀
 
-## 新增能力说明
+当前项目重点已经升级为一个更偏 Agent 工程化的 AIOps Agent 平台，强调：
 
-当前 AIOps 能力已经升级为基于 `LangGraph + MCP` 的可治理 Agent 平台，并保持现有 `POST /api/aiops` 流式接口兼容。
+- Agent Workflow
+- Tool Policy 治理
+- Human-in-the-loop 审批
+- Agent Trace 执行轨迹
+- Verifier 证据校验
+- Incident Memory 与 Skill Draft
 
-本次新增的核心能力：
+## 主要能力
 
-- 通过 `AGENT.md` 管理项目级 Agent 角色、诊断原则、工具规范和安全边界
-- 通过 `skills/<skill>/SKILL.md` 注入 Runbook Skill，并由 Skill Router 按输入自动匹配
-- 通过 `tool_policy.yaml` 对工具分级：`read_only`、`low_risk`、`dangerous`、`blocked`
-- 对 `dangerous` 工具增加人工审批
-- 增加 Agent Trace，记录 planner、executor、tool_call、replanner、verifier、approval、memory 等执行过程
-- 增加 Verifier，对最终报告做证据自检
-- 增加 Incident Memory 和 Skill Draft 生成能力
+### 1. 普通 RAG 对话
 
-新增运行数据默认落盘到：
+- 支持普通问答和流式问答
+- 支持上传本地文档后写入向量库
+- 检索结果来自本地知识库，不依赖外部联网搜索
+
+说明：
+
+- `aiops-docs/` 里的文档会作为本地 Runbook / 知识库被检索
+- 它不是实时日志，也不是在线监控数据
+
+### 2. AIOps Agent
+
+`POST /api/aiops` 保持流式 SSE 接口兼容，并在原有 `status / plan / step_complete / report / complete / error` 之外，增强支持：
+
+- `trace`
+- `approval_required`
+- `verifier_result`
+
+AIOps 当前支持两种模式：
+
+- 默认巡检模式
+- 自定义诊断模式
+
+#### 默认巡检模式
+
+当前端点击 `AI Ops` 且输入框为空时，系统会使用默认任务：
+
+> 请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。
+
+默认巡检的第一步固定是：
+
+- `get_active_alerts` / `list_active_alerts`
+
+如果没有活跃告警：
+
+- 会直接生成“当前未检测到活跃告警”的巡检报告
+
+如果发现告警：
+
+- 会围绕最高严重级别的 `target_alert` 做后续诊断
+
+#### 自定义诊断模式
+
+当前端输入框有内容时，点击 `AI Ops` 会把输入内容作为 `task` 传给后端。
+
+例如：
+
+```text
+data-sync-service 出现 HighCPUUsage 告警，请排查
+```
+
+或者：
+
+```text
+docker镜像冲突怎么办
+```
+
+### 3. Skill Router
+
+项目支持 `skills/<skill>/SKILL.md` 形式的本地 Runbook Skill。
+
+当前 Skill Router 会根据用户任务匹配技能，并只把命中的 Skill 注入 Planner。  
+当前已经接入的典型链路包括：
+
+- 告警巡检
+- `disk_cleanup` 磁盘清理诊断
+
+### 4. Tool Policy
+
+项目根目录下的 `tool_policy.yaml` 会对工具分级：
+
+- `read_only`
+- `low_risk`
+- `dangerous`
+- `blocked`
+
+执行规则：
+
+- `read_only / low_risk`：自动执行
+- `dangerous`：进入人工审批
+- `blocked`：直接拒绝
+
+### 5. Agent Trace
+
+AIOps 运行过程中会记录完整执行轨迹，包括：
+
+- `planner`
+- `skill_router`
+- `executor`
+- `tool_call`
+- `replanner`
+- `verifier`
+- `approval`
+- `memory`
+
+落盘位置：
 
 - `data/agent_traces/<session_id>.jsonl`
-- `data/pending_actions/<session_id>.json`
-- `data/runtime_sessions/<session_id>.json`
-- `data/incident_memory/incidents.jsonl`
 
-## ✨ 核心特性
+前端支持：
 
-- 🤖 **智能对话** - LangChain 多轮对话 + 流式输出
-- 📚 **RAG 问答** - 向量检索增强，支持文档上传、自动建立向量索引、自动更新知识库
-- 🔧 **AIOps 诊断** - Plan-Execute-Replan 自动故障诊断和根因分析
-- 🌐 **Web 界面** - 现代化 UI，支持多种对话模式：快速问答/流式对话
-- 🔌 **MCP 集成** - 日志查询和监控数据工具接入
+- 默认折叠 Agent Trace
+- 点击“查看 Agent Trace”后展开时间线
 
-## 🛠️ 技术栈
+### 6. Verifier
 
-- **框架**: FastAPI + LangChain + LangGraph
-- **LLM**: 阿里云 DashScope (通义千问)
-- **向量库**: Milvus
-- **工具协议**: MCP (Model Context Protocol)
+最终报告生成前，Verifier 会检查：
 
-## 🚀 快速开始
+- 是否有足够证据支持结论
+- 是否存在无根据推断
+- 是否遗漏影响范围
+- 是否缺少风险提示
+- 是否声明未执行危险操作
 
-### 环境要求
-- Python 3.10+
-- 阿里云 DashScope API Key ([获取地址](https://dashscope.aliyun.com/))
+### 7. Human-in-the-loop 审批
 
-### 安装和启动
+对 `dangerous` 工具调用，后端会挂起执行，等待前端审批。
 
-#### Linux/macOS 环境
+相关接口：
+
+- `POST /api/agent/approve`
+- `POST /api/agent/reject`
+- `GET /api/agent/pending-actions/{session_id}`
+
+### 8. Incident Memory 与 Skill Draft
+
+AIOps 完成后，系统支持沉淀：
+
+- 用户任务
+- 命中的 Skill
+- 调用过的工具
+- 关键证据
+- 根因
+- 建议
+- Verifier 结果
+
+注意：
+
+- 现在不会在报告生成后立刻自动写入记忆
+- 只有用户在前端点击“是否帮助到您”里的“是”后，才会触发后续记忆与 Skill Draft 生成
+
+## 联网搜索
+
+项目已支持 AIOps 专用 `web_search` 工具，基于 Tavily Search API。
+
+用途：
+
+- 本地 Runbook 不足时补充公开文档
+- 查询官方错误码说明
+- 查询框架/云厂商公开排障资料
+
+限制：
+
+- 只接入 AIOps Agent
+- 不接入普通 RAG Chat
+- 联网资料只能作为补充证据，不能替代本地监控、日志、工单和知识库证据
+
+如果报告引用了联网资料，最终报告中应单独区分：
+
+- 本地监控/日志/工单证据
+- 本地知识库 Runbook
+- 联网搜索补充资料
+
+## Mock 数据说明
+
+当前 AIOps 包含一套纯模拟数据链路，便于本地联调：
+
+- 活跃告警 mock：`mcp_servers/monitor_server.py`
+- 磁盘诊断 mock：`mock_data/disk.json`
+
+例如磁盘诊断任务：
+
+```text
+服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议
+```
+
+会命中 `disk_cleanup` Skill，并按顺序采集：
+
+- `get_disk_usage`
+- `list_large_directories`
+- `list_large_files`
+- `query_deleted_open_files`
+- `query_docker_disk_usage`
+- `get_disk_cleanup_candidates`
+- `retrieve_knowledge`
+
+## 目录结构
+
+```text
+app/
+  api/                   API 路由
+  agent/aiops/           AIOps Agent 模块
+  core/                  LLM / Milvus 等基础能力
+  models/                请求与响应模型
+  services/              RAG / AIOps / 向量服务
+  tools/                 本地工具（含 web_search）
+static/                  前端页面
+mcp_servers/             本地 MCP mock 服务
+skills/                  本地 Skill 定义
+mock_data/               模拟数据
+data/                    Trace / 审批 / 运行时 / 记忆落盘目录
+aiops-docs/              本地 Runbook / RAG 文档
+```
+
+## 快速开始
+
+### 1. 安装依赖
 
 ```bash
-# 1. 克隆项目
-git clone <repository_url>
-cd super_biz_agent_py
-
-# 2. 安装依赖（推荐使用 uv）
-# 方式 1: 使用 uv（推荐，更快）
-pip install uv
-uv venv
-source .venv/bin/activate
-uv pip install -e .
-
-# 方式 2: 使用 pip
 pip install -e .
-
-# 3. 编辑配置文件
-# 首次使用需要编辑 .env 文件，填入你的 DASHSCOPE_API_KEY
-vim .env  # 或使用其他编辑器
-
-# 4. 一键初始化（启动 Docker + 服务 + 上传文档）
-make init
-
-# 5. 一键启动
-make start
 ```
 
-#### Windows 环境（PowerShell/CMD）
+或者：
 
-如果Windows 不支持 `make` 命令，可以手动执行以下步骤以启动服务：
-
-```powershell
-# 1. 克隆项目
-git clone <repository_url>
-cd super_biz_agent_py
-
-# 2. 创建虚拟环境并安装依赖
-# 方式 1: 使用 uv（推荐，更快）
-pip install uv
-# 创建虚拟环境
+```bash
 uv venv
-# 激活虚拟环境
-.venv\Scripts\activate
-# 安装所有依赖
 uv pip install -e .
-
-# 方式 2: 使用 pip
-python -m venv .venv
-.venv\Scripts\activate
-pip install -e .
-
-# 3. 编辑配置文件
-# 使用记事本或其他编辑器打开 .env 文件，填入你的 DASHSCOPE_API_KEY
-notepad .env
-
-# 4. 启动 Docker Desktop
-# 确保 Docker Desktop 已安装并正在运行
-
-# 5. 启动 Milvus 向量数据库（Docker Compose）
-docker compose -f vector-database.yml up -d
-
-# 6. 等待 Milvus 启动完成（约 5-10 秒）
-timeout /t 10
-
-# 7. 启动 MCP 服务
-# 启动 CLS 日志查询服务（新开一个 PowerShell 窗口）
-python mcp_servers/cls_server.py
-
-# 启动 Monitor 监控服务（新开一个 PowerShell 窗口）
-python mcp_servers/monitor_server.py
-
-# 8. 启动 FastAPI 主服务（新开一个 PowerShell 窗口）
-# 注意：日志会自动输出到 logs\app_YYYY-MM-DD.log
-python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
-
-# 9. 上传文档到向量库（新开一个 PowerShell 窗口）
-# 等待服务启动完成后执行
-timeout /t 5
-python -c "import requests, os, time; [requests.post('http://localhost:9900/api/upload', files={'file': open(f'aiops-docs/{f}', 'rb')}) or time.sleep(1) for f in os.listdir('aiops-docs') if f.endswith('.md')]"
 ```
 
-**Windows 一键启动脚本**（推荐）
+### 2. 配置 `.env`
 
-使用启动脚本：
+建议至少配置以下项目：
 
-```powershell
-# 启动所有服务
-.\start-windows.bat
+```env
+APP_NAME=SuperBizAgent
+HOST=0.0.0.0
+PORT=9900
 
-# 停止所有服务
-.\stop-windows.bat
-```
+# 聊天 / AIOps 主模型
+LLM_API_KEY=
+LLM_API_BASE=
+LLM_MODEL=
 
-### 访问服务
-- **Web 界面**: http://localhost:9900
-- **API 文档**: http://localhost:9900/docs
+# 兼容旧配置时的回退项
+DASHSCOPE_API_KEY=
+DASHSCOPE_API_BASE=
+DASHSCOPE_MODEL=
 
-## 📡 API 接口
-
-### 核心接口
-
-| 功能 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| 普通对话 | POST | `/api/chat` | 一次性返回 |
-| 流式对话 | POST | `/api/chat_stream` | SSE 流式输出 |
-| AIOps 诊断 | POST | `/api/aiops` | 自动故障诊断（流式） |
-| 文件上传 | POST | `/api/upload` | 上传并索引文档 |
-| 健康检查 | GET | `/api/health` | 服务状态检查 |
-
-### 使用示例
-
-```bash
-# 普通对话
-curl -X POST "http://localhost:9900/api/chat" \
-  -H "Content-Type: application/json" \
-  -d '{"Id":"session-123","Question":"你好"}'
-
-# 流式对话
-curl -X POST "http://localhost:9900/api/chat_stream" \
-  -H "Content-Type: application/json" \
-  -d '{"Id":"session-123","Question":"你好"}' \
-  --no-buffer
-
-# AIOps 诊断
-curl -X POST "http://localhost:9900/api/aiops" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"session-123","task":"data-sync-service 出现 HighCPUUsage 告警，请排查","mode":"custom"}' \
-  --no-buffer
-```
-
-## Agent 平台补充接口
-
-`/api/aiops` 仍然保持原有 SSE 事件兼容，在原有 `status`、`plan`、`step_complete`、`report`、`complete`、`error` 之外，新增：
-
-- `trace`：单条 Agent Trace 事件
-- `approval_required`：危险工具调用需要审批
-- `verifier_result`：Verifier 校验结果
-
-人工审批接口：
-
-| 功能 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| 审批通过 | POST | `/api/agent/approve` | 批准危险工具调用，并继续当前会话 |
-| 审批拒绝 | POST | `/api/agent/reject` | 拒绝危险工具调用，并进入重新规划 |
-| 查询待审批动作 | GET | `/api/agent/pending-actions/{session_id}` | 查询当前会话的待审批动作 |
-
-Skill 草稿接口：
-
-| 功能 | 方法 | 路径 | 说明 |
-|------|------|------|------|
-| 查看草稿 | GET | `/api/agent/skill-drafts` | 查看自动生成的 Skill 草稿 |
-| 启用草稿 | POST | `/api/agent/skill-drafts/{draft_name}/enable` | 将草稿移动到 `skills/` |
-| 删除草稿 | DELETE | `/api/agent/skill-drafts/{draft_name}` | 删除草稿 |
-
-补充说明：
-
-- `POST /api/upload` 现在会返回 `indexed` 和 `index_error`，用于区分“上传成功”和“索引成功”
-- 当前 AIOps 工作流为 `Skill Router -> Planner -> Executor -> Replanner -> Verifier`
-- AIOps 支持两种模式：
-  `mode=default` 时执行默认巡检，优先查询当前活跃告警；
-  `mode=custom` 时直接使用用户输入的诊断任务
-- 前端已增加 Agent Trace 时间线、危险工具审批弹窗和 Skill 草稿面板
-
-## 📁 项目结构
-
-```
-super_biz_agent_py/
-├── app/                                    # 应用核心
-│   ├── __init__.py                         # 包初始化（自动加载日志配置）
-│   ├── main.py                             # FastAPI 应用入口
-│   ├── config.py                           # 配置管理（环境变量、MCP 服务器配置）
-│   ├── api/                                # API 路由层
-│   │   ├── __init__.py
-│   │   ├── chat.py                         # 对话接口（RAG 聊天）
-│   │   ├── aiops.py                        # AIOps 接口（故障诊断）
-│   │   ├── file.py                         # 文件管理（文档上传）
-│   │   └── health.py                       # 健康检查（服务状态）
-│   ├── services/                           # 业务服务层
-│   │   ├── __init__.py
-│   │   ├── rag_agent_service.py            # RAG Agent（LangGraph 状态图）
-│   │   ├── aiops_service.py                # AIOps 服务（计划-执行-重规划）
-│   │   ├── vector_store_manager.py         # 向量存储管理器
-│   │   ├── vector_embedding_service.py     # 向量embedding服务
-│   │   ├── vector_index_service.py         # 向量索引服务
-│   │   ├── vector_search_service.py        # 向量检索服务
-│   │   └── document_splitter_service.py    # 文档分割服务
-│   ├── agent/                              # Agent 模块
-│   │   ├── __init__.py
-│   │   ├── mcp_client.py                   # MCP 客户端（工具调用）
-│   │   └── aiops/                          # AIOps 核心逻辑
-│   │       ├── __init__.py
-│   │       ├── planner.py                  # 计划制定器
-│   │       ├── executor.py                 # 步骤执行器
-│   │       ├── replanner.py                # 重规划器
-│   │       ├── state.py                    # 状态定义
-│   │       └── utils.py                    # 工具函数
-│   ├── models/                             # 数据模型层
-│   │   ├── __init__.py
-│   │   ├── aiops.py                        # AIOps 模型
-│   │   ├── document.py                     # 文档模型
-│   │   ├── request.py                      # 请求模型
-│   │   └── response.py                     # 响应模型
-│   ├── tools/                              # Agent 工具集
-│   │   ├── __init__.py
-│   │   ├── knowledge_tool.py               # 知识库查询工具
-│   │   └── time_tool.py                    # 时间工具
-│   ├── core/                               # 核心组件
-│   │   ├── __init__.py
-│   │   ├── llm_factory.py                  # LLM 工厂（模型管理）
-│   │   └── milvus_client.py                # Milvus 客户端
-│   └── utils/                              # 工具类
-│       ├── __init__.py
-│       └── logger.py                       # 日志配置（Loguru）
-├── static/                                 # Web 前端（纯静态）
-│   ├── index.html                          # 主页面
-│   ├── app.js                              # 前端逻辑
-│   └── styles.css                          # 样式表
-├── mcp_servers/                            # MCP 服务器
-│   ├── cls_server.py                       # CLS 日志查询服务
-│   ├── monitor_server.py                   # 监控数据服务
-│   └── README.md                           # MCP 服务说明
-├── aiops-docs/                             # 运维知识库（Markdown 文档）
-├── logs/                                   # 日志目录（Loguru 自动创建）
-│   └── app_YYYY-MM-DD.log                  # 按天轮转的日志文件
-├── uploads/                                # 上传文件临时目录
-├── volumes/                                # Milvus 数据持久化目录
-├── .env                                    # 环境变量配置（需手动创建）
-├── Makefile                                # 项目管理命令（Linux/macOS）
-├── start-windows.bat                       # Windows 启动脚本
-├── stop-windows.bat                        # Windows 停止脚本
-├── vector-database.yml                     # Milvus Docker Compose 配置
-├── pyproject.toml                          # 项目配置（依赖、元数据）
-├── uv.lock                                 # uv 依赖锁定文件
-├── pyrightconfig.json                      # Pyright 类型检查配置
-└── README.md                               # 项目说明
-```
-
-## ⚙️ 配置说明
-
-通过 `.env` 文件配置：
-
-```bash
-# 阿里云LLM DashScope 配置（必填）
-# 秘钥管理： https://bailian.console.aliyun.com/cn-beijing/?spm=5176.29597918.J_SEsSjsNv72yRuRFS2VknO.2.61ac133ccTVQLw&tab=demohouse#/api-key
-DASHSCOPE_API_KEY=your-api-key （配置你自己的秘钥）
-DASHSCOPE_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1  # 不配置则默认会使用新加坡站点
-DASHSCOPE_MODEL=qwen-max
-
-# Embedding 配置（可与问答模型使用不同厂商、不同 URL、不同 API Key）
-EMBEDDING_API_KEY=your-embedding-api-key
-EMBEDDING_API_BASE=https://dashscope.aliyuncs.com/compatible-mode/v1
-EMBEDDING_MODE=single_modal  # 默认单模态；可选 multimodal
+# 向量模型
+EMBEDDING_API_KEY=
+EMBEDDING_API_BASE=
+EMBEDDING_MODE=single_modal
 TEXT_EMBEDDING_MODEL=text-embedding-v4
 MULTIMODAL_EMBEDDING_MODEL=tongyi-embedding-vision-flash-2026-03-06
 
-# Milvus 配置
+# Milvus
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
 
-# RAG 配置
+# RAG / AIOps
 RAG_TOP_K=3
+RAG_MODEL=qwen3.5-plus-2026-02-15
+AIOPS_MAX_STEPS=8
+
+# Web Search（仅 AIOps）
+WEB_SEARCH_ENABLED=false
+TAVILY_API_KEY=
+WEB_SEARCH_MAX_RESULTS=5
+WEB_SEARCH_DEPTH=basic
+WEB_SEARCH_TIMEOUT=10
+
+# 文档切分
 CHUNK_MAX_SIZE=800
 CHUNK_OVERLAP=100
+
+# MCP
+MCP_CLS_TRANSPORT=streamable-http
+MCP_CLS_URL=http://localhost:8003/mcp
+MCP_MONITOR_TRANSPORT=streamable-http
+MCP_MONITOR_URL=http://localhost:8004/mcp
 ```
 
 说明：
 
-- 文档上传、知识库检索、Incident Memory 当前都走文本 Embedding 接口，所以会使用 `TEXT_EMBEDDING_MODEL`
-- Embedding 链路优先读取 `EMBEDDING_API_KEY` 和 `EMBEDDING_API_BASE`；如果未配置，才会回退到 `DASHSCOPE_API_KEY` 和 `DASHSCOPE_API_BASE`
-- 只要向量服务提供 OpenAI 兼容的 Embedding 接口，就可以单独接入豆包等其他厂商
-- 如果需要为后续图片/多模态能力预留模型，请配置 `MULTIMODAL_EMBEDDING_MODEL`，不要把视觉模型填到文本模型位
+- 普通聊天和 AIOps 主模型现在统一优先读取 `LLM_*`
+- 向量模型优先读取 `EMBEDDING_*`
+- 不建议把多模态模型填到 `TEXT_EMBEDDING_MODEL`
 
-## 🎯 AIOps 智能运维
+### 3. 启动 Milvus / MCP / 服务
 
-基于 **Plan-Execute-Replan** 模式实现自动故障诊断。
+示例：
 
-支持两种触发方式：
+```bash
+docker compose -f vector-database.yml up -d
+python mcp_servers/cls_server.py
+python mcp_servers/monitor_server.py
+python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
+```
 
-- 默认巡检模式：输入框为空时点击 `AI Ops`，会先查询 mock 活跃告警，再围绕最高严重级别告警做服务级诊断
-- 自定义诊断模式：输入框有内容时点击 `AI Ops`，会把输入内容作为 `task` 发送给后端
+### 4. 打开页面
+
+- Web UI: `http://localhost:9900`
+- Swagger: `http://localhost:9900/docs`
+
+## 主要接口
+
+### 普通问答
+
+- `POST /api/chat`
+- `POST /api/chat_stream`
+
+### AIOps
+
+- `POST /api/aiops`
+
+请求体：
+
+```json
+{
+  "session_id": "session-123",
+  "task": "data-sync-service 出现 HighCPUUsage 告警，请排查",
+  "mode": "custom"
+}
+```
 
 说明：
 
-- `mcp_servers/monitor_server.py` 中的 `get_active_alerts` / `list_active_alerts` 会返回 mock 告警数据，默认包含 `data-sync-service / HighCPUUsage`
-- `aiops-docs/` 中的内容是上传到 RAG 的 runbook / 运维知识文档，不是实时日志或实时监控数据
+- `mode=default`：默认巡检
+- `mode=custom`：自定义诊断
 
-### 核心特性
-- ✅ 自动制定诊断计划（Planner）
-- ✅ 智能工具调用（Executor）
-- ✅ 动态调整步骤（Replanner）
-- ✅ 流式输出诊断过程
-- ✅ 生成结构化报告
+### 上传文档
 
-### 快速测试
+- `POST /api/upload`
 
-```bash
-# 服务已通过 make init 自动启动
-# 如需重启服务：make restart
+返回里会包含：
 
-# 访问 Web 界面，点击"智能运维与诊断工具"
-# 或使用 API
-curl -X POST "http://localhost:9900/api/aiops" \
-  -H "Content-Type: application/json" \
-  -d '{"session_id":"test","mode":"default"}' \
-  --no-buffer
-```
+- `indexed`
+- `index_error`
 
-### 诊断流程
-```
-1. Planner 制定计划 → 生成 4-6 个诊断步骤
-2. Executor 执行步骤 → 调用 MCP 工具（日志查询、监控数据）
-3. Replanner 评估结果 → 决定继续/调整/生成报告
-4. 输出诊断报告 → 根因分析 + 运维建议
-```
+用于区分：
 
-## 📝 开发指南
+- 文件上传成功
+- 向量索引是否成功
 
-### 常用命令
+### 审批接口
 
-```bash
-# 项目管理
-make init              # 一键初始化（Docker + 服务 + 文档）
-make start             # 启动所有服务
-make stop              # 停止所有服务
-make restart           # 重启所有服务
+- `POST /api/agent/approve`
+- `POST /api/agent/reject`
+- `GET /api/agent/pending-actions/{session_id}`
 
-# 依赖管理
-make install-dev       # 安装开发依赖
-make sync              # 同步依赖
+### 反馈接口
 
-# Docker 管理
-make up                # 启动 Docker 容器
-make down              # 停止 Docker 容器
+- `POST /api/agent/session-feedback`
 
-# 代码质量
-make format            # 格式化代码
-make lint              # 代码检查
-```
+说明：
 
+- 前端报告结束后会显示“请问是否帮助到您？”
+- 只有点击“是”，才会触发记忆沉淀与 Skill Draft 生成
 
-## 🐛 常见问题
+## 当前前端行为
 
-### Windows 环境问题
+- 普通对话与 AIOps 分开处理
+- AIOps 报告完成后默认显示最终 Markdown 报告
+- Agent Trace 默认折叠
+- 报告底部会显示“请问是否帮助到您？”
 
-#### 1. `make` 命令不可用
-Windows 不支持 `make` 命令，请使用提供的批处理脚本：
-```powershell
-# 启动服务
-.\start-windows.bat
+## 注意事项
 
-# 停止服务
-.\stop-windows.bat
-```
+1. `web_search` 只给 AIOps 使用，不接入普通 RAG Chat。
+2. `aiops-docs` 是本地 Runbook 文档，不是实时日志。
+3. 危险操作只能作为建议展示，不能声称已经执行。
+4. 若复用旧 `session_id`，可能会带上旧的 runtime snapshot；联调时建议使用新的 `session_id`。
 
-#### 2. PowerShell 执行策略限制
-如果遇到 "无法加载文件，因为在此系统上禁止运行脚本" 错误：
-```powershell
-# 临时允许脚本执行（管理员权限）
-Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope Process
+## 变更记录
 
-# 或者使用 CMD 而不是 PowerShell
-cmd
-.\start-windows.bat
-```
+所有工程化改动记录见：
 
-#### 3. 端口被占用（Windows）
-```powershell
-# 查看占用端口的进程
-netstat -ano | findstr :9900
-
-# 结束进程（替换 PID 为实际进程 ID）
-taskkill /F /PID <PID>
-```
-
-### 通用问题
-
-### API Key 错误
-```bash
-# 检查环境变量
-cat .env | grep DASHSCOPE_API_KEY    # Linux/macOS
-type .env | findstr DASHSCOPE_API_KEY  # Windows
-```
-
-### Milvus 连接失败
-```bash
-# 确保本机有 Docker 服务并且已经启动（可以使用 Docker Desktop）
-
-# 检查 Milvus 状态
-docker ps | grep milvus
-
-# 重启 Milvus（使用 docker compose）
-docker compose -f vector-database.yml restart
-
-# 或者重启单个服务
-docker compose -f vector-database.yml restart standalone
-```
-
-### 服务无法启动
-
-**Linux/macOS:**
-```bash
-# 查看服务日志
-tail -f logs/app_$(date +%Y-%m-%d).log  # FastAPI 主服务（Loguru 日志）
-tail -f mcp_cls.log                      # CLS MCP 服务
-tail -f mcp_monitor.log                  # Monitor MCP 服务
-
-# 检查端口占用
-lsof -i :9900  # FastAPI
-lsof -i :8003  # CLS MCP
-lsof -i :8004  # Monitor MCP
-```
-
-**Windows:**
-```powershell
-# 查看服务日志（获取今天的日期）
-$today = Get-Date -Format "yyyy-MM-dd"
-type logs\app_$today.log  # FastAPI 主服务（Loguru 日志）
-type mcp_cls.log          # CLS MCP 服务
-type mcp_monitor.log      # Monitor MCP 服务
-
-# 或者查看最新的日志文件
-Get-ChildItem logs\*.log | Sort-Object LastWriteTime -Descending | Select-Object -First 1 | Get-Content -Tail 50
-
-# 检查端口占用
-netstat -ano | findstr :9900  # FastAPI
-netstat -ano | findstr :8003  # CLS MCP
-netstat -ano | findstr :8004  # Monitor MCP
-```
-
-## 📚 参考资源
-
-- [FastAPI 文档](https://fastapi.tiangolo.com/)
-- [LangChain 文档](https://python.langchain.com/)
-- [LangGraph Plan-Execute](https://langchain-ai.github.io/langgraph/tutorials/plan-and-execute/)
-- [阿里云 DashScope](https://dashscope.aliyun.com/)
-- [MCP 协议](https://modelcontextprotocol.io/)
-
-## 📄 许可证
-author： chief
-
-MIT License
-## AIOps 磁盘清理 Mock Skill
-
-- 当前内置了一个基于纯模拟数据的 `disk_cleanup` Skill，用于验证磁盘空间告警类诊断链路。
-- 当用户输入“服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议”这类问题时，Skill Router 会优先命中 `disk_cleanup`，Planner 会按固定顺序采集磁盘证据，而不是只返回通用知识库建议。
-- 磁盘现场数据来自 `mock_data/disk.json`，由 `mcp_servers/monitor_server.py` 中新增的只读工具提供，包括：`get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates`。
-- 这些工具全部是只读 mock 工具，不会执行 shell，也不会删除任何文件。
-- `aiops-docs/` 中的内容仍然只是上传到 RAG 的 runbook 文档，用于补充清理原则与风险提示，不代表实时日志或实时监控数据。
-### AIOps è”ç½‘æœç´¢è¡¥å……è¯´æ˜Ž
-
-- `web_search` åªä¼šæŽ¥å…¥ AIOps Agentï¼Œä¸ä¼šæŽ¥å…¥æ™®é€š RAG Chatã€‚
-- é»˜è®¤é€šè¿‡ `.env` å…³é—­ï¼Œåªæœ‰ `WEB_SEARCH_ENABLED=true` ä¸” `TAVILY_API_KEY` æœ‰æ•ˆæ—¶æ‰ä¼šåŠ å…¥ AIOps å·¥å…·åˆ—è¡¨ã€‚
-- AIOps ä¼šä¼˜å…ˆä½¿ç”¨æœ¬åœ°ç›‘æŽ§ã€�æ—¥å¿—ã€�å·¥å•å’Œ `retrieve_knowledge`ã€‚
-- `web_search` åªèƒ½ç”¨äºŽè¡¥å…… Runbookã€�å…¬å¼€é”™è¯¯ç è¯´æ˜Žã€�å®˜æ–¹æ–‡æ¡£æˆ–å…¬å¼€æŽ’éšœèµ„æ–™ï¼Œä¸èƒ½æ›¿ä»£æœ¬åœ°è¯æ®ã€‚
-- å¦‚æžœæŠ¥å‘Šå¼•ç”¨äº† `web_search`ï¼ŒAIOps æœ€ç»ˆæŠ¥å‘Šä¼šåœ¨â€œ## è”ç½‘æœç´¢è¡¥å……èµ„æ–™â€ä¸­åˆ—å‡ºæ ‡é¢˜ã€�é“¾æŽ¥ã€�æ‘˜è¦å’Œç”¨é€”ã€‚
-- `aiops-docs` æ˜¯ä¸Šä¼ åˆ° RAG çŸ¥è¯†åº“çš„ runbook æ–‡æ¡£ç›®å½•ï¼Œä¸æ˜¯å®žæ—¶æ—¥å¿—æ•°æ®ã€‚
+- `Changelog/2026-05-05-aiops-agent-platform.md`

@@ -1066,6 +1066,40 @@ body {
     word-break: break-word;
 }
 
+.message.assistant.aiops-message .message-content h1,
+.message.assistant.aiops-message .message-content h2,
+.message.assistant.aiops-message .message-content h3 {
+    display: block;
+    width: 100%;
+    overflow-wrap: anywhere;
+    word-break: break-word;
+}
+
+.message.assistant.aiops-message .message-content h1 {
+    margin-top: 0;
+    margin-bottom: 14px;
+    padding-bottom: 10px;
+}
+
+.message.assistant.aiops-message .message-content h2 {
+    margin-top: 22px;
+    margin-bottom: 10px;
+    padding-bottom: 8px;
+}
+
+.message.assistant.aiops-message .message-content h3 {
+    margin-top: 18px;
+    margin-bottom: 8px;
+}
+
+.message.assistant.aiops-message .message-content p,
+.message.assistant.aiops-message .message-content ul,
+.message.assistant.aiops-message .message-content ol,
+.message.assistant.aiops-message .message-content pre,
+.message.assistant.aiops-message .message-content blockquote {
+    max-width: 100%;
+}
+
 /* 详情折叠区域 */
 .aiops-details {
     margin-bottom: 16px;

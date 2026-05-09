@@ -1,4 +1,4 @@
-class SuperBizAgentApp {
+﻿class SuperBizAgentApp {
     constructor() {
         this.apiBaseUrl = "/api";
         this.currentMode = "quick";
@@ -116,7 +116,7 @@ class SuperBizAgentApp {
 
     updateUI() {
         if (this.currentModeText) {
-            this.currentModeText.textContent = this.currentMode === "stream" ? "流式" : "快捷";
+            this.currentModeText.textContent = this.currentMode === "stream" ? "娴佸紡" : "蹇嵎";
         }
         if (this.messageInput) this.messageInput.disabled = this.isStreaming;
         if (this.sendButton) this.sendButton.disabled = this.isStreaming;
@@ -193,7 +193,7 @@ class SuperBizAgentApp {
                 <div class="history-item-content">
                     <span class="history-item-title">${this.escapeHtml(history.title)}</span>
                 </div>
-                <button class="history-item-delete" title="删除">
+                <button class="history-item-delete" title="鍒犻櫎">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
@@ -250,7 +250,7 @@ class SuperBizAgentApp {
         const body = document.createElement("div");
         body.className = `message-content ${isLoading ? "loading-message-content" : ""}`;
         if (isLoading) {
-            body.textContent = content || "处理中...";
+            body.textContent = content || "澶勭悊涓?..";
         } else if (type === "assistant") {
             body.innerHTML = this.renderMarkdown(content);
             this.highlightCodeBlocks(body);
@@ -284,7 +284,7 @@ class SuperBizAgentApp {
         return message;
     }
 
-    addLoadingMessage(content = "处理中...") {
+    addLoadingMessage(content = "澶勭悊涓?..") {
         return this.addMessage("assistant", content, true, false);
     }
 
@@ -459,36 +459,37 @@ class SuperBizAgentApp {
         if (final) {
             const sections = [];
             if (state.report) sections.push(String(state.report).trim());
-            if (state.error) sections.push(`## 错误\n${state.error}`);
-            return sections.join("\n\n").trim() || "AIOps 诊断已完成。";
+            if (state.error) sections.push(`## \u9519\u8bef\n${state.error}`);
+            return sections.join("\n\n").trim() || "AIOps \u8bca\u65ad\u5df2\u5b8c\u6210\u3002";
         }
+
         const lines = [];
-        lines.push(`# AIOps ${final ? "诊断结果" : "诊断进行中"}`);
+        lines.push("# AIOps \u8bca\u65ad\u8fdb\u884c\u4e2d");
         lines.push("");
-        lines.push(`- 模式：${state.mode === "custom" ? "自定义诊断" : "默认巡检"}`);
-        lines.push(`- 任务：${state.task || "未指定任务"}`);
+        lines.push(`- \u6a21\u5f0f\uff1a${state.mode === "custom" ? "\u81ea\u5b9a\u4e49\u8bca\u65ad" : "\u9ed8\u8ba4\u5de1\u68c0"}`);
+        lines.push(`- \u4efb\u52a1\uff1a${state.task || "\u672a\u63d0\u4f9b\u4efb\u52a1"}`);
 
         if (state.statusMessages.length) {
             lines.push("");
-            lines.push("## 当前状态");
+            lines.push("## \u5f53\u524d\u72b6\u6001");
             state.statusMessages.slice(-8).forEach((item) => lines.push(`- ${item.message}`));
         }
 
         if (Array.isArray(state.plan) && state.plan.length) {
             lines.push("");
-            lines.push("## 诊断计划");
+            lines.push("## \u8bca\u65ad\u8ba1\u5212");
             state.plan.forEach((step, index) => lines.push(this.formatPlanStep(step, index)));
         }
 
         if (state.steps.length) {
             lines.push("");
-            lines.push("## 执行步骤");
+            lines.push("## \u6267\u884c\u6b65\u9aa4");
             state.steps.forEach((step, index) => {
-                lines.push(`### 步骤 ${index + 1}`);
-                lines.push(`- 任务：${step.current_step || "未知步骤"}`);
-                lines.push(`- 摘要：${this.formatStepPreview(step.result_preview) || "无"}`);
+                lines.push(`### \u6b65\u9aa4 ${index + 1}`);
+                lines.push(`- \u4efb\u52a1\uff1a${step.current_step || "\u672a\u63d0\u4f9b\u6b65\u9aa4\u63cf\u8ff0"}`);
+                lines.push(`- \u6458\u8981\uff1a${this.formatStepPreview(step.result_preview) || "\u6682\u65e0\u7ed3\u679c\u6458\u8981"}`);
                 if (typeof step.remaining_steps === "number") {
-                    lines.push(`- 剩余步骤：${step.remaining_steps}`);
+                    lines.push(`- \u5269\u4f59\u6b65\u9aa4\uff1a${step.remaining_steps}`);
                 }
                 lines.push("");
             });
@@ -497,21 +498,21 @@ class SuperBizAgentApp {
         if (state.verifier) {
             lines.push("");
             lines.push("## Verifier");
-            lines.push(`- 结果：${state.verifier.passed ? "通过" : "未通过"}`);
-            (state.verifier.findings || []).forEach((item) => lines.push(`- 发现：${item}`));
-            (state.verifier.suggested_next_steps || []).forEach((item) => lines.push(`- 建议补充：${item}`));
+            lines.push(`- \u7ed3\u679c\uff1a${state.verifier.passed ? "\u901a\u8fc7" : "\u672a\u901a\u8fc7"}`);
+            (state.verifier.findings || []).forEach((item) => lines.push(`- \u53d1\u73b0\uff1a${item}`));
+            (state.verifier.suggested_next_steps || []).forEach((item) => lines.push(`- \u5efa\u8bae\u8865\u5145\uff1a${item}`));
         }
 
         if (state.report) {
             lines.push("");
-            lines.push("## 最终报告");
+            lines.push("## \u6700\u7ec8\u62a5\u544a");
             lines.push("");
             lines.push(state.report);
         }
 
         if (state.error) {
             lines.push("");
-            lines.push("## 错误");
+            lines.push("## \u9519\u8bef");
             lines.push(state.error);
         }
 
@@ -550,8 +551,8 @@ class SuperBizAgentApp {
 
         const updateLauncherText = () => {
             launcher.textContent = panel.classList.contains("expanded")
-                ? `收起 Agent Trace (${renderableEntries.length})`
-                : `查看 Agent Trace (${renderableEntries.length})`;
+                ? `\u6536\u8d77 Agent Trace (${renderableEntries.length})`
+                : `\u67e5\u770b Agent Trace (${renderableEntries.length})`;
         };
         updateLauncherText();
         launcher.onclick = () => {
@@ -677,26 +678,26 @@ class SuperBizAgentApp {
 
         if (feedbackStatus === "helpful") {
             prompt.innerHTML = `
-                <div class="aiops-feedback-copy">已记录为有帮助。</div>
-                ${generatedSkillDraft ? `<div class="aiops-feedback-note">已生成 Skill 草稿：${this.escapeHtml(generatedSkillDraft)}</div>` : ""}
+                <div class="aiops-feedback-copy">\u5df2\u8bb0\u5f55\u4e3a\u6709\u5e2e\u52a9\u3002</div>
+                ${generatedSkillDraft ? `<div class="aiops-feedback-note">\u5df2\u751f\u6210 Skill \u8349\u7a3f\uff1a${this.escapeHtml(generatedSkillDraft)}</div>` : ""}
             `;
             return;
         }
 
         if (feedbackStatus === "not_helpful") {
-            prompt.innerHTML = `<div class="aiops-feedback-copy">已记录为未帮助到您，本次不会生成 Skill 草稿。</div>`;
+            prompt.innerHTML = `<div class="aiops-feedback-copy">\u5df2\u8bb0\u5f55\u4e3a\u672a\u5e2e\u52a9\u5230\u60a8\uff0c\u672c\u6b21\u4e0d\u4f1a\u751f\u6210 Skill \u8349\u7a3f\u3002</div>`;
             return;
         }
 
         prompt.innerHTML = `
-            <div class="aiops-feedback-copy">请问是否帮助到您？</div>
+            <div class="aiops-feedback-copy">\u8bf7\u95ee\u662f\u5426\u5e2e\u52a9\u5230\u60a8\uff1f</div>
             <div class="aiops-feedback-actions">
-                <button type="button" class="aiops-feedback-btn" data-feedback="yes">是</button>
-                <button type="button" class="aiops-feedback-btn secondary" data-feedback="no">否</button>
+                <button type="button" class="aiops-feedback-btn" data-feedback="yes">\u662f</button>
+                <button type="button" class="aiops-feedback-btn secondary" data-feedback="no">\u5426</button>
             </div>
         `;
-        prompt.querySelector('[data-feedback="yes"]')?.addEventListener("click", () => this.submitAIOpsFeedback(sessionId, true, prompt));
-        prompt.querySelector('[data-feedback="no"]')?.addEventListener("click", () => this.submitAIOpsFeedback(sessionId, false, prompt));
+        prompt.querySelector("[data-feedback=\"yes\"]")?.addEventListener("click", () => this.submitAIOpsFeedback(sessionId, true, prompt));
+        prompt.querySelector("[data-feedback=\"no\"]")?.addEventListener("click", () => this.submitAIOpsFeedback(sessionId, false, prompt));
     }
 
     async submitAIOpsFeedback(sessionId, helpful, promptElement) {
@@ -729,12 +730,12 @@ class SuperBizAgentApp {
                 feedbackStatus,
                 generatedSkillDraft,
             });
-            this.showNotification(helpful ? "已记录反馈" : "已记录为未帮助", "success");
+            this.showNotification(helpful ? "\u5df2\u8bb0\u5f55\u53cd\u9988" : "\u5df2\u8bb0\u5f55\u4e3a\u672a\u5e2e\u52a9", "success");
         } catch (error) {
             buttons.forEach((button) => {
                 button.disabled = false;
             });
-            this.showNotification(`提交反馈失败: ${error.message}`, "error");
+            this.showNotification(`\u63d0\u4ea4\u53cd\u9988\u5931\u8d25: ${error.message}`, "error");
         }
     }
 
@@ -819,9 +820,9 @@ class SuperBizAgentApp {
                 payload.diagnosis?.report ||
                 payload.response ||
                 this.ensureAIOpsState().report ||
-                "诊断已完成。";
+                "AIOps \u8bca\u65ad\u5df2\u5b8c\u6210\u3002";
             this.ensureAIOpsState().report = finalReport;
-            this.addAIOpsStatus("AIOps 诊断完成", "complete");
+            this.addAIOpsStatus("AIOps \u8bca\u65ad\u5b8c\u6210", "complete");
             this.updateAIOpsMessage(
                 this.currentAIOpsMessage,
                 this.buildAIOpsMarkdown({ final: true }),
@@ -837,7 +838,7 @@ class SuperBizAgentApp {
                 feedbackStatus: "pending",
                 generatedSkillDraft: null,
             });
-            this.showNotification("AIOps 诊断完成", "success");
+            this.showNotification("AIOps \u8bca\u65ad\u5b8c\u6210", "success");
             return true;
         }
 
@@ -849,27 +850,23 @@ class SuperBizAgentApp {
     }
 
     async sendAIOpsRequest({ resume = false, task = "", mode = "default" } = {}) {
-        if (this.isStreaming) {
-            this.showNotification("当前已有诊断在执行，请稍候", "warning");
-            return;
-        }
-
         this.isStreaming = true;
-        if (!resume) {
-            this.currentAIOpsContext = { task, mode };
-            this.currentAIOpsState = this.createAIOpsRenderState(task, mode);
-            this.currentAIOpsTrace = [];
-            this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
-            this.currentAIOpsMessage.classList.add("aiops-message");
-            this.addAIOpsStatus("AIOps Agent 正在启动诊断...", "workflow_started");
-            this.renderAIOpsProgress();
-        } else {
-            this.addAIOpsStatus("审批已处理，继续执行诊断...", "approval_resume");
-            this.renderAIOpsProgress();
-        }
         this.updateUI();
 
         try {
+            if (!resume) {
+                this.currentAIOpsContext = { task, mode };
+                this.currentAIOpsState = this.createAIOpsRenderState(task, mode);
+                this.currentAIOpsTrace = [];
+                this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
+                this.currentAIOpsMessage.classList.add("aiops-message");
+                this.addAIOpsStatus("AIOps Agent 正在启动诊断...", "workflow_started");
+                this.renderAIOpsProgress();
+            } else {
+                this.addAIOpsStatus("审批已处理，继续执行诊断...", "approval_resume");
+                this.renderAIOpsProgress();
+            }
+
             const response = await fetch("/api/aiops", {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
@@ -879,7 +876,6 @@ class SuperBizAgentApp {
                     mode: this.currentAIOpsContext?.mode || mode || "default",
                 }),
             });
-
             if (!response.ok || !response.body) throw new Error(`HTTP ${response.status}`);
 
             const reader = response.body.getReader();
@@ -935,17 +931,17 @@ class SuperBizAgentApp {
 
     async triggerAIOps() {
         if (this.isStreaming) {
-            this.showNotification("当前已有诊断在执行，请稍候", "warning");
+            this.showNotification("\u5f53\u524d\u5df2\u6709 AIOps \u8bca\u65ad\u5728\u8fdb\u884c\u4e2d\uff0c\u8bf7\u7a0d\u5019\u3002", "warning");
             return;
         }
         const userInput = this.messageInput?.value?.trim() || "";
         const mode = userInput ? "custom" : "default";
         const task =
             userInput ||
-            "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。";
+            "\u8bf7\u68c0\u67e5\u5f53\u524d\u7cfb\u7edf\u662f\u5426\u5b58\u5728\u6d3b\u8dc3\u544a\u8b66\u3002\u5982\u679c\u5b58\u5728\u544a\u8b66\uff0c\u8bf7\u9009\u62e9\u6700\u9ad8\u4e25\u91cd\u7ea7\u522b\u544a\u8b66\uff0c\u7ed3\u5408\u76d1\u63a7\u6307\u6807\u3001\u65e5\u5fd7\u3001\u5386\u53f2\u5de5\u5355\u548c\u77e5\u8bc6\u5e93 runbook \u8fdb\u884c\u6839\u56e0\u5206\u6790\uff0c\u5e76\u4fdd\u7559\u5b8c\u6574 Agent Trace\u3002";
         const userMessage =
             userInput ||
-            "请开始一次 AIOps 巡检，并保留完整 Agent Trace。";
+            "\u8bf7\u5f00\u59cb\u4e00\u6b21 AIOps \u5de1\u68c0\uff0c\u5e76\u4fdd\u7559\u5b8c\u6574 Agent Trace\u3002";
 
         this.addMessage("user", userMessage);
         if (this.messageInput) this.messageInput.value = "";
@@ -955,7 +951,7 @@ class SuperBizAgentApp {
     openApprovalModal(payload) {
         this.pendingApproval = payload;
         if (!this.approvalModal) return;
-        this.approvalReason.textContent = payload.reason || "危险工具需要审批。";
+        this.approvalReason.textContent = payload.reason || "该工具调用需要人工审批。";
         this.approvalToolName.textContent = payload.tool_name || "-";
         this.approvalToolArgs.textContent = payload.tool_args_summary || "-";
         this.approvalModal.classList.remove("hidden");
@@ -987,15 +983,14 @@ class SuperBizAgentApp {
             }
             this.closeApprovalModal();
             this.pendingApproval = null;
-            this.showNotification(approved ? "已批准，继续执行" : "已拒绝本次工具调用", "success");
+            this.showNotification(approved ? "已批准继续执行" : "已拒绝该操作", "success");
             await this.sendAIOpsRequest({ resume: true });
         } catch (error) {
             this.showNotification(`审批处理失败: ${error.message}`, "error");
         }
     }
-
     async sendQuickMessage(message) {
-        const loading = this.addLoadingMessage("正在生成回复...");
+        const loading = this.addLoadingMessage("姝ｅ湪鐢熸垚鍥炲...");
         try {
             const response = await fetch(`${this.apiBaseUrl}/chat`, {
                 method: "POST",
@@ -1005,7 +1000,7 @@ class SuperBizAgentApp {
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             loading.remove();
-            this.addMessage("assistant", data.data?.answer || data.data?.errorMessage || "没有返回结果");
+            this.addMessage("assistant", data.data?.answer || data.data?.errorMessage || "娌℃湁杩斿洖缁撴灉");
         } catch (error) {
             loading.remove();
             throw error;
@@ -1013,7 +1008,7 @@ class SuperBizAgentApp {
     }
 
     async sendStreamMessage(message) {
-        const assistant = this.addLoadingMessage("正在生成回复...");
+        const assistant = this.addLoadingMessage("姝ｅ湪鐢熸垚鍥炲...");
         let fullResponse = "";
 
         const response = await fetch(`${this.apiBaseUrl}/chat_stream`, {
@@ -1042,9 +1037,9 @@ class SuperBizAgentApp {
                         this.updateAssistantMessage(assistant, fullResponse, { markdown: false });
                     } else if (payload.type === "done") {
                         assistant.remove();
-                        this.addMessage("assistant", fullResponse || "没有返回结果");
+                        this.addMessage("assistant", fullResponse || "娌℃湁杩斿洖缁撴灉");
                     } else if (payload.type === "error") {
-                        throw new Error(payload.message || "流式对话失败");
+                        throw new Error(payload.message || "娴佸紡瀵硅瘽澶辫触");
                     }
                 }
             }
@@ -1070,7 +1065,7 @@ class SuperBizAgentApp {
                 await this.sendQuickMessage(message);
             }
         } catch (error) {
-            this.showNotification(`发送失败: ${error.message}`, "error");
+            this.showNotification(`鍙戦€佸け璐? ${error.message}`, "error");
         } finally {
             this.isStreaming = false;
             this.updateUI();
@@ -1089,8 +1084,8 @@ class SuperBizAgentApp {
     showUploadOverlay(visible) {
         this.showLoadingOverlay(
             visible,
-            visible ? "正在上传文件..." : "",
-            visible ? "请稍候" : "",
+            visible ? "\u6b63\u5728\u4e0a\u4f20\u77e5\u8bc6\u5e93\u6587\u4ef6..." : "",
+            visible ? "\u8bf7\u7a0d\u5019\uff0c\u7cfb\u7edf\u4f1a\u81ea\u52a8\u5b8c\u6210\u7d22\u5f15\u3002" : "",
         );
     }
 
@@ -1108,12 +1103,12 @@ class SuperBizAgentApp {
             }
             const indexed = data.data?.indexed !== false;
             const message = indexed
-                ? `文件 \`${file.name}\` 已上传并完成索引。`
-                : `文件 \`${file.name}\` 上传成功，但索引失败：${data.data?.index_error || "未知错误"}`;
+                ? `\u6587\u4ef6 \`${file.name}\` \u4e0a\u4f20\u6210\u529f\uff0c\u5e76\u5df2\u5199\u5165\u77e5\u8bc6\u5e93\u7d22\u5f15\u3002`
+                : `\u6587\u4ef6 \`${file.name}\` \u4e0a\u4f20\u6210\u529f\uff0c\u4f46\u7d22\u5f15\u5931\u8d25\uff1a${data.data?.index_error || "\u672a\u8fd4\u56de\u8be6\u7ec6\u9519\u8bef"}`;
             this.addMessage("assistant", message);
-            this.showNotification(indexed ? "文件上传成功" : "文件上传成功，但索引失败", indexed ? "success" : "warning");
+            this.showNotification(indexed ? "\u6587\u4ef6\u5df2\u4e0a\u4f20\u5e76\u5b8c\u6210\u7d22\u5f15" : "\u6587\u4ef6\u5df2\u4e0a\u4f20\uff0c\u4f46\u7d22\u5f15\u5931\u8d25", indexed ? "success" : "warning");
         } catch (error) {
-            this.showNotification(`上传失败: ${error.message}`, "error");
+            this.showNotification(`\u4e0a\u4f20\u6587\u4ef6\u5931\u8d25: ${error.message}`, "error");
         } finally {
             if (this.fileInput) this.fileInput.value = "";
             this.showUploadOverlay(false);

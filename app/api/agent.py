@@ -7,12 +7,14 @@ from fastapi.responses import JSONResponse
 from loguru import logger
 
 from app.agent.aiops.runtime_store import runtime_store
+from app.agent.aiops.incident_memory import append_incident
 from app.agent.aiops.skill_draft_generator import (
     generate_skill_draft,
     delete_skill_draft,
     enable_skill_draft,
     list_skill_drafts,
 )
+from app.agent.aiops.trace import append_trace_event, create_trace_event
 from app.models.agent import AgentActionRequest, SessionFeedbackRequest
 
 
@@ -126,7 +128,7 @@ async def remove_draft(draft_name: str):
 
 @router.post("/session-feedback")
 async def submit_session_feedback(request: SessionFeedbackRequest):
-    """Persist helpful feedback and optionally generate a skill draft."""
+    """Persist feedback, defer memory save until user feedback, and optionally generate a skill draft."""
     snapshot = runtime_store.load_session(request.session_id)
     if not snapshot or not snapshot.get("state"):
         raise HTTPException(status_code=404, detail=f"Session not found: {request.session_id}")
@@ -141,6 +143,19 @@ async def submit_session_feedback(request: SessionFeedbackRequest):
 
     generated_draft = state.get("generated_skill_draft")
     incident_record = state.get("incident_record")
+    memory_persisted = bool(state.get("memory_persisted"))
+
+    if incident_record and not memory_persisted:
+        append_incident(incident_record)
+        state["memory_persisted"] = True
+        memory_trace = create_trace_event(
+            session_id=request.session_id,
+            node="memory",
+            status="success",
+            title="Incident memory saved after feedback",
+            result_summary=incident_record.get("user_task", "")[:180],
+        )
+        append_trace_event(request.session_id, memory_trace)
 
     if request.helpful and incident_record and not generated_draft:
         generated_draft = generate_skill_draft(incident_record)

@@ -29,3 +29,4 @@ class PlanExecuteState(TypedDict, total=False):
     incident_record: dict[str, Any]
     feedback: dict[str, Any]
     generated_skill_draft: str | None
+    memory_persisted: bool

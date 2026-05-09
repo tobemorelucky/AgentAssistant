@@ -54,3 +54,7 @@
 - 为 `runtime_store` 增加持久化瘦身：限制 `past_steps`、`trace_events`、`response`、`verifier_result` 的持久化长度，避免长会话把 `runtime_sessions/<session_id>.json` 持续写大并再次触发 Windows 文件写入异常。
 - 梳理普通 RAG Chat 与 AIOps 的 LLM 配置来源：新增独立的 `LLM_API_KEY`、`LLM_API_BASE`、`LLM_MODEL` 读取逻辑，并让 `rag_agent_service`、AIOps `planner/executor/replanner/verifier` 统一通过 `llm_factory.create_qwen_chat_model()` 创建模型实例，避免继续把旧的 `RAG_MODEL` 与另一家厂商的 `API key/base` 混用导致 401 鉴权错误。
 - 调整 AIOps 最终报告渲染：前端最终态不再把“模式 / 任务 / 当前状态 / 诊断计划 / 执行步骤 / Verifier”继续包在报告正文外层，而是只展示后端生成的最终 Markdown 报告；同时收紧通用模板报告内容，去掉重复的任务段，保留结论、证据、建议和风险提示。
+- 修复 Tavily 联网搜索工具的鉴权与容错：`app/tools/web_search_tool.py` 改为使用 `Authorization: Bearer <TAVILY_API_KEY>` 请求头，不再把 `api_key` 放进 JSON body；同时补充 `follow_redirects=True`、`trust_env=True`、详细请求/响应日志和最多 2 次的超时/协议/HTTP 错误重试，确保 Tavily 异常时只返回清晰错误信息，不会直接打崩 AIOps 工作流。
+- 修复普通 RAG 流式对话偶发只显示“没有返回结果”的问题：重写 `app/services/rag_agent_service.py` 与 `app/api/chat.py` 的聊天流式输出逻辑，为 `query_stream` 增加 `message_type`、`token.content/content_blocks` 非空性、`full_answer` 长度日志，并在 SSE payload 中同时返回 `content` / `answer` / `message` 字段，兼容前端当前的普通聊天流式解析。
+- 调整 AIOps 会后记忆时机：`app/services/aiops_service.py` 不再在最终报告发出后立即写入 incident memory 和 `memory` trace，避免前端已经显示报告完成后后端仍持续追加 trace；记忆落盘改为延迟到用户点击 `/api/agent/session-feedback` 时触发，且只写一次。
+- 收紧普通 RAG 流式日志噪声：移除 `query_stream` 中逐 token 的 `INFO` 级别日志，避免单次问答把 `message_type`、`token.content/content_blocks` 状态重复刷入日志文件；保留开始、结束和最终 `full_answer` 长度日志用于排障。

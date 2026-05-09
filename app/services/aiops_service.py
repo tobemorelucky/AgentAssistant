@@ -18,7 +18,7 @@ from app.agent.aiops import (
     verifier,
 )
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
-from app.agent.aiops.incident_memory import append_incident, build_incident_record
+from app.agent.aiops.incident_memory import build_incident_record
 from app.agent.aiops.patrol import summarize_structured_tool_result
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.trace import append_trace_event, create_trace_event
@@ -314,6 +314,7 @@ class AIOpsService:
             "incident_record": {},
             "feedback": {},
             "generated_skill_draft": None,
+            "memory_persisted": False,
         }
 
     @staticmethod
@@ -469,19 +470,7 @@ class AIOpsService:
                 return
 
             runtime_store.clear_pending_actions(session_id)
-            incident_record = build_incident_record(current_state)
-            append_incident(incident_record)
-            current_state["incident_record"] = incident_record
-            memory_trace = create_trace_event(
-                session_id=session_id,
-                node="memory",
-                status="success",
-                title="Incident memory saved",
-                result_summary=incident_record.get("user_task", "")[:180],
-            )
-            append_trace_event(session_id, memory_trace)
-            yield {"type": "trace", "stage": "memory", "trace": memory_trace}
-
+            current_state["incident_record"] = build_incident_record(current_state)
             runtime_store.save_session(session_id, current_state, "completed")
             yield {
                 "type": "complete",

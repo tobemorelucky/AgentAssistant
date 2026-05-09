@@ -2,15 +2,11 @@
 
 from __future__ import annotations
 
-from typing import Any
-
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.agent.aiops.disk_cleanup import (
-    build_disk_verifier_findings,
-    is_disk_cleanup_request,
-)
+from app.agent.aiops.disk_cleanup import build_disk_verifier_findings, is_disk_cleanup_request
+from app.agent.aiops.patrol import build_patrol_verifier_findings
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
 from app.config import config
@@ -48,40 +44,47 @@ def _disk_verify(state: PlanExecuteState) -> VerifierOutput:
 
 
 def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
+    response = state.get("response", "")
+    past_steps = state.get("past_steps", [])
+
     if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
         return _disk_verify(state)
 
-    response = state.get("response", "")
-    past_steps = state.get("past_steps", [])
-    active_alerts = state.get("active_alerts", [])
+    if state.get("target_alert"):
+        findings, suggested, missing, warnings = build_patrol_verifier_findings(
+            response=response,
+            target_alert=state.get("target_alert"),
+            past_steps=past_steps,
+            matched_skills=state.get("matched_skills", []),
+        )
+        return VerifierOutput(
+            passed=not findings,
+            findings=findings,
+            suggested_next_steps=suggested,
+            missing_evidence=missing,
+            risk_warnings=warnings,
+        )
+
     findings: list[str] = []
     suggested: list[str] = []
     missing: list[str] = []
     warnings: list[str] = []
 
-    if state.get("mode") == "default" and not active_alerts and "未检测到活跃告警" in response:
-        return VerifierOutput()
-
     if len(past_steps) < 2:
-        findings.append("执行步骤过少，缺少支撑结论的工具证据。")
-        suggested.append("补充至少两步工具证据，再生成诊断报告。")
-        missing.append("执行步骤")
+        findings.append("执行步骤过少，证据不足。")
+        suggested.append("补充更多工具证据后再生成报告。")
+        missing.append("execution_history")
+
+    if "风险提示" not in response:
+        findings.append("报告中缺少风险提示。")
+        suggested.append("补充风险提示并说明高风险操作需要人工审批。")
+        missing.append("risk_warning")
 
     lowered = response.lower()
-    if "根因" in response and "证据" not in response:
-        findings.append("报告提到了根因，但没有明确对应证据。")
-        suggested.append("补充关键证据段落，并将证据与根因关联。")
-        missing.append("关键证据")
-
-    if "影响范围" not in response:
-        findings.append("报告缺少影响范围说明。")
-        suggested.append("补充受影响主机、服务或业务范围。")
-        missing.append("影响范围")
-
-    if any(keyword in lowered for keyword in ["删除", "kill", "prune"]) and "风险" not in response:
-        findings.append("报告包含高风险建议，但缺少风险提示。")
-        suggested.append("为高风险建议补充风险说明和人工确认要求。")
-        warnings.append("存在高风险操作建议")
+    if any(keyword in lowered for keyword in ["restart", "prune", "rm -rf"]) and "审批" not in response:
+        findings.append("报告包含高风险建议但没有人工审批提示。")
+        suggested.append("在高风险建议处加入审批提示和风险说明。")
+        warnings.append("high_risk_suggestion_without_warning")
 
     return VerifierOutput(
         passed=not findings,
@@ -92,7 +95,7 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     )
 
 
-async def verifier(state: PlanExecuteState) -> dict[str, Any]:
+async def verifier(state: PlanExecuteState) -> dict[str, object]:
     """LangGraph node: verify whether the report is evidence-backed."""
     logger.info("=== Verifier ===")
     session_id = state.get("session_id", "default")
@@ -102,6 +105,8 @@ async def verifier(state: PlanExecuteState) -> dict[str, Any]:
     result: VerifierOutput
     if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
         result = _disk_verify(state)
+    elif state.get("target_alert"):
+        result = _heuristic_verify(state)
     elif ChatQwen and ChatPromptTemplate and config.dashscope_api_key and response.strip():
         prompt = ChatPromptTemplate.from_messages(
             [

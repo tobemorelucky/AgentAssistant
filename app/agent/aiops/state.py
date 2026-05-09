@@ -14,7 +14,7 @@ class PlanExecuteState(TypedDict, total=False):
     mode: str
     entry_node: str
     status: str
-    plan: List[str]
+    plan: List[Any]
     past_steps: Annotated[List[tuple[str, str]], operator.add]
     response: str
     matched_skills: List[dict[str, Any]]

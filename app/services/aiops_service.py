@@ -19,6 +19,7 @@ from app.agent.aiops import (
 )
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
 from app.agent.aiops.incident_memory import append_incident, build_incident_record
+from app.agent.aiops.patrol import summarize_structured_tool_result
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.trace import append_trace_event, create_trace_event
 
@@ -232,6 +233,22 @@ class AIOpsService:
                 return summarize_disk_tool_result("query_docker_disk_usage", parsed)[:240]
             if {"safe", "need_approval", "forbidden"} & set(parsed.keys()):
                 return summarize_disk_tool_result("get_disk_cleanup_candidates", parsed)[:240]
+            if parsed.get("error"):
+                return f"执行失败: {parsed.get('error')}"[:240]
+            if "statistics" in parsed and "service_name" in parsed:
+                if "memory_usage" in parsed or "memory" in json.dumps(parsed, ensure_ascii=False).lower():
+                    return summarize_structured_tool_result("query_memory_metrics", parsed)[:240]
+                return summarize_structured_tool_result("query_cpu_metrics", parsed)[:240]
+            if "processes" in parsed and isinstance(parsed["processes"], list):
+                return summarize_structured_tool_result("query_process_list", parsed)[:240]
+            if "tickets" in parsed and isinstance(parsed["tickets"], list):
+                return summarize_structured_tool_result("search_historical_tickets", parsed)[:240]
+            if "topics" in parsed and isinstance(parsed["topics"], list):
+                return summarize_structured_tool_result("search_topic_by_service_name", parsed)[:240]
+            if "logs" in parsed and isinstance(parsed["logs"], list):
+                return summarize_structured_tool_result("search_log", parsed)[:240]
+            if parsed.get("service_name") and ("owner_team" in parsed or "deployment" in parsed):
+                return summarize_structured_tool_result("get_service_info", parsed)[:240]
             preferred_keys = ["message", "service_name", "alert_name", "status", "total"]
             fragments = [f"{key}={parsed[key]}" for key in preferred_keys if key in parsed]
             if fragments:

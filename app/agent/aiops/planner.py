@@ -10,45 +10,54 @@ from langchain_qwq import ChatQwen
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.agent.aiops.disk_cleanup import (
-    build_disk_cleanup_plan,
-    is_disk_cleanup_request,
-)
+from app.agent.aiops.disk_cleanup import build_disk_cleanup_plan, is_disk_cleanup_request
 from app.agent.aiops.incident_memory import find_similar_incidents
+from app.agent.aiops.patrol import (
+    build_fallback_tool_plan,
+    build_no_alert_report,
+    choose_highest_severity_alert,
+    required_evidence_summary,
+    sanitize_tool_plan_steps,
+    summarize_alerts,
+    tool_plan_steps_to_dicts,
+)
 from app.agent.aiops.profile_loader import get_agent_profile_prompt
 from app.agent.aiops.state import PlanExecuteState
+from app.agent.aiops.tool_policy import check_tool_policy
 from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.agent.aiops.utils import format_tools_description, invoke_tool
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
+from app.models.aiops import ToolPlanStep
 from app.tools import get_current_time, retrieve_knowledge
 
 
-class Plan(BaseModel):
-    """Structured planning output."""
+class GenericPlan(BaseModel):
+    """Structured planning output for non-patrol generic tasks."""
 
     steps: list[str] = Field(default_factory=list)
 
 
-planner_prompt = ChatPromptTemplate.from_messages(
+class StructuredToolPlan(BaseModel):
+    """Structured tool plan for controlled default patrol."""
+
+    steps: list[ToolPlanStep] = Field(default_factory=list)
+
+
+generic_planner_prompt = ChatPromptTemplate.from_messages(
     [
         (
             "system",
             dedent(
                 """
-                你是一个可治理的 AIOps Planner。请基于用户任务、Agent Profile、已命中的 Skill、可用工具、
-                相似 Incident Case 和已知告警信息，生成一个精炼、可执行的诊断计划。
+                You are the AIOps Planner.
+                Build a concise 4-7 step execution plan for the user's request.
+                The plan should be high level and executable by downstream nodes.
 
-                规则：
-                - 计划步骤必须能被 Executor 执行，每一步都尽量明确提到要调用的工具。
-                - 优先采集证据，再做判断，不要先下结论。
-                - 计划步骤数量控制在 4 到 7 步。
-                - 如果已有 active alerts 或 target alert，计划必须围绕具体 service_name / alert_name 展开。
-
-                可用工具：
+                Available tools:
                 {tools_description}
 
-                额外上下文：
+                Context:
                 {experience_context}
                 """
             ).strip(),
@@ -57,92 +66,110 @@ planner_prompt = ChatPromptTemplate.from_messages(
     ]
 )
 
+structured_patrol_prompt = ChatPromptTemplate.from_messages(
+    [
+        (
+            "system",
+            dedent(
+                """
+                You are the governed AIOps default patrol planner.
+
+                You MUST return 4-8 structured tool steps.
+                Each step must contain:
+                - tool
+                - args
+                - reason
+                - evidence_type
+
+                Rules:
+                - The target alert is already selected.
+                - Use only available tools.
+                - Do not use blocked tools.
+                - Prefer read_only and low_risk tools.
+                - Do not include dangerous tools in the plan.
+                - If you need logs, search_topic_by_service_name should appear before search_log unless topic_id is already known.
+                - Cover every required evidence type at least once.
+                - Keep args concrete and stable.
+                - Do not output prose outside the structured steps.
+
+                Available tools:
+                {tools_description}
+
+                Tool policy:
+                {tool_policy_summary}
+
+                Agent profile:
+                {agent_profile}
+                """
+            ).strip(),
+        ),
+        (
+            "user",
+            dedent(
+                """
+                User task:
+                {task}
+
+                Target alert:
+                {target_alert}
+
+                Required evidence:
+                {required_evidence}
+
+                Matched skills:
+                {matched_skills}
+
+                Similar incidents:
+                {similar_incidents}
+
+                Runbook context:
+                {runbook_context}
+                """
+            ).strip(),
+        ),
+    ]
+)
+
 DEFAULT_ALERT_KEYWORDS = (
-    "检查当前系统告警",
-    "当前系统是否存在告警",
     "活跃告警",
     "当前系统告警",
+    "当前系统是否存在告警",
+    "check current alerts",
+    "active alerts",
+    "current alerts",
 )
-SEVERITY_ORDER = {"critical": 4, "high": 3, "warning": 2, "info": 1, "low": 1}
 
 
 def should_fetch_active_alerts(mode: str, input_text: str) -> bool:
-    """Whether this request should start from active alert discovery."""
     normalized = (input_text or "").strip().lower()
     if mode == "default":
         return True
     return any(keyword.lower() in normalized for keyword in DEFAULT_ALERT_KEYWORDS)
 
 
-def choose_highest_severity_alert(alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
-    """Select the highest severity alert."""
-    if not alerts:
-        return None
-    return sorted(
-        alerts,
-        key=lambda alert: (
-            -SEVERITY_ORDER.get(str(alert.get("severity", "")).lower(), 0),
-            str(alert.get("service_name", "")),
-            str(alert.get("alert_name", "")),
-        ),
-    )[0]
+def _skill_context(skills: list[dict[str, Any]]) -> str:
+    if not skills:
+        return "No matched skills."
+    return "\n\n".join(skill.get("summary", "") or skill.get("description", "") or skill.get("name", "") for skill in skills)
 
 
-def build_no_alert_report() -> str:
-    """Return a structured patrol report when no active alerts are present."""
-    return dedent(
-        """
-        # 当前未检测到活跃告警
-
-        ## 巡检结论
-        - 当前 mock 监控源中未发现处于 firing 状态的活跃告警。
-
-        ## 已执行检查
-        - 查询当前活跃告警列表
-        - 校验 active alerts 返回结果
-
-        ## 影响范围
-        - 当前没有发现需要进入服务级根因分析的告警对象。
-
-        ## 风险提示
-        - 本次结论只基于当前可访问的 mock 告警源。
-        - 如果后续接入真实监控平台，建议继续保留 active alerts 作为默认巡检第一步。
-
-        ## 后续建议
-        - 保持当前巡检频率
-        - 持续完善告警与 runbook 的映射关系
-        """
-    ).strip()
-
-
-def build_default_alert_plan(alert: dict[str, Any]) -> list[str]:
-    """Build a deterministic patrol plan around the selected alert."""
-    service_name = alert.get("service_name", "unknown-service")
-    alert_name = alert.get("alert_name", "unknown-alert")
-    instance = alert.get("instance", "unknown-instance")
-    duration = alert.get("duration", "unknown")
-    return [
-        f"调用 get_service_info 获取 {service_name} 的服务拓扑、实例和依赖信息，确认告警实例 {instance} 的上下文。",
-        f"调用 query_cpu_metrics 查询 {service_name} 最近 {duration} 的 CPU 指标，核对 {alert_name} 是否与 CPU 上升一致。",
-        f"调用 query_memory_metrics 查询 {service_name} 的内存趋势，排除资源争用或内存压力共同触发的情况。",
-        f"调用 query_process_list 查看 {service_name} 各实例进程占用，定位是否为单实例热点或异常进程。",
-        f"调用 search_historical_tickets 检索 {service_name} 与 {alert_name} 相关历史工单，参考已有根因与处置经验。",
-        f"调用 retrieve_knowledge 检索 {service_name} / {alert_name} 对应 runbook，补充修复建议与风险提示。",
-    ]
-
-
-def summarize_alerts(alerts: list[dict[str, Any]]) -> str:
-    """Create compact alert summaries for prompts and traces."""
-    if not alerts:
-        return "No active alerts."
-    return "; ".join(
-        (
-            f"{alert.get('service_name', 'unknown')}/"
-            f"{alert.get('alert_name', 'unknown')} "
-            f"[{alert.get('severity', 'unknown')}]"
-        )
-        for alert in alerts[:5]
+def _incident_context(similar_incidents: list[dict[str, Any]]) -> str:
+    if not similar_incidents:
+        return "No similar incident cases."
+    return "\n\n".join(
+        f"- Task: {incident.get('user_task', '')}\n"
+        f"  Root cause: {incident.get('root_cause', '')}\n"
+        f"  Tools: {', '.join(incident.get('tools_used', []) or [])}"
+        for incident in similar_incidents
     )
+
+
+def _tool_policy_summary(tool_names: list[str]) -> str:
+    lines = []
+    for tool_name in sorted(set(tool_names)):
+        decision = check_tool_policy(tool_name)
+        lines.append(f"- {tool_name}: {decision['level']} ({decision['decision']})")
+    return "\n".join(lines)
 
 
 async def planner(state: PlanExecuteState) -> dict[str, Any]:
@@ -158,26 +185,29 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     mcp_tools = await mcp_client.get_tools()
     all_tools = local_tools + mcp_tools
     tool_map = {tool.name if hasattr(tool, "name") else str(tool): tool for tool in all_tools}
+    tool_names = list(tool_map.keys())
 
     similar_incidents = find_similar_incidents(input_text, limit=3)
-    alerts_trace_events: list[dict[str, Any]] = []
+    trace_events: list[dict[str, Any]] = []
     active_alerts = list(state.get("active_alerts", []) or [])
     target_alert = state.get("target_alert")
 
     if is_disk_cleanup_request(input_text, matched_skills):
         plan_steps = build_disk_cleanup_plan()
-        trace_event = create_trace_event(
-            session_id=session_id,
-            node="planner",
-            status="success",
-            title="Disk cleanup plan generated",
-            result_summary=" | ".join(plan_steps[:3]),
-            metadata={"matched_skills": [skill.get("name") for skill in matched_skills]},
+        trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="planner",
+                status="success",
+                title="Disk cleanup plan generated",
+                result_summary=" | ".join(plan_steps[:3]),
+                metadata={"matched_skills": [skill.get("name") for skill in matched_skills]},
+            )
         )
         return {
             "plan": plan_steps,
             "similar_incidents": similar_incidents,
-            "trace_events": [trace_event],
+            "trace_events": trace_events,
         }
 
     if should_fetch_active_alerts(mode, input_text):
@@ -186,12 +216,12 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
             alert_result = await invoke_tool(active_alert_tool, {"include_resolved": False})
             active_alerts = list(alert_result.get("active_alerts") or alert_result.get("alerts") or [])
             target_alert = choose_highest_severity_alert(active_alerts)
-            alerts_trace_events.append(
+            trace_events.append(
                 create_trace_event(
                     session_id=session_id,
                     node="tool_call",
                     status="success",
-                    title="Fetched active alerts for patrol",
+                    title="Fetched active alerts for default patrol",
                     tool_name=getattr(active_alert_tool, "name", "get_active_alerts"),
                     tool_args={"include_resolved": False},
                     result_summary=summarize_result(alert_result),
@@ -202,9 +232,10 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                     },
                 )
             )
+
             if not active_alerts:
                 report = build_no_alert_report()
-                alerts_trace_events.append(
+                trace_events.append(
                     create_trace_event(
                         session_id=session_id,
                         node="planner",
@@ -217,55 +248,94 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                     "active_alerts": [],
                     "target_alert": None,
                     "response": report,
-                    "trace_events": alerts_trace_events,
+                    "trace_events": trace_events,
                 }
 
             if target_alert:
-                plan_steps = build_default_alert_plan(target_alert)
-                alerts_trace_events.append(
+                blocked_tools = {
+                    name for name in tool_names if check_tool_policy(name).get("decision") == "reject"
+                }
+                available_tools = set(tool_names)
+                structured_steps: list[ToolPlanStep] = []
+                runbook_context = ""
+
+                try:
+                    runbook_context = await retrieve_knowledge.ainvoke(
+                        {"query": f"{target_alert.get('service_name', '')} {target_alert.get('alert_name', '')} runbook"}
+                    )
+                except Exception as exc:  # pragma: no cover - best effort
+                    logger.warning(f"retrieve_knowledge failed during patrol planning: {exc}")
+
+                if config.dashscope_api_key:
+                    try:
+                        llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
+                        chain = structured_patrol_prompt | llm.with_structured_output(StructuredToolPlan)
+                        llm_plan = await chain.ainvoke(
+                            {
+                                "task": input_text,
+                                "target_alert": summarize_result(target_alert),
+                                "required_evidence": summarize_result(
+                                    required_evidence_summary(target_alert, matched_skills)
+                                ),
+                                "matched_skills": _skill_context(matched_skills),
+                                "similar_incidents": _incident_context(similar_incidents),
+                                "runbook_context": runbook_context or "No runbook context.",
+                                "tools_description": format_tools_description(all_tools),
+                                "tool_policy_summary": _tool_policy_summary(tool_names),
+                                "agent_profile": get_agent_profile_prompt(),
+                            }
+                        )
+                        structured_steps = list(llm_plan.steps or [])
+                    except Exception as exc:
+                        logger.warning(f"Structured patrol planning failed, fallback to template: {exc}")
+
+                sanitized_steps = sanitize_tool_plan_steps(
+                    structured_steps,
+                    target_alert=target_alert,
+                    matched_skills=matched_skills,
+                    available_tools=available_tools,
+                    blocked_tools=blocked_tools,
+                )
+                if not sanitized_steps:
+                    sanitized_steps = build_fallback_tool_plan(target_alert, matched_skills)
+
+                trace_events.append(
                     create_trace_event(
                         session_id=session_id,
                         node="planner",
                         status="success",
-                        title=f"Default patrol plan for {target_alert.get('service_name', 'unknown-service')}",
-                        result_summary=" | ".join(plan_steps[:3]),
-                        metadata={"active_alerts": active_alerts, "target_alert": target_alert},
+                        title=f"Controlled patrol plan for {target_alert.get('service_name', 'unknown-service')}",
+                        result_summary=" | ".join(step.tool for step in sanitized_steps[:4]),
+                        metadata={
+                            "active_alerts": active_alerts,
+                            "target_alert": target_alert,
+                            "required_evidence": required_evidence_summary(target_alert, matched_skills),
+                        },
                     )
                 )
                 return {
-                    "plan": plan_steps,
+                    "plan": tool_plan_steps_to_dicts(sanitized_steps),
                     "active_alerts": active_alerts,
                     "target_alert": target_alert,
                     "similar_incidents": similar_incidents,
-                    "trace_events": alerts_trace_events,
+                    "trace_events": trace_events,
                 }
 
     agent_profile = get_agent_profile_prompt()
-    skill_context = (
-        "\n\n".join(skill.get("summary", "") for skill in matched_skills) if matched_skills else "No matched skills."
-    )
-    incident_context = (
-        "\n\n".join(
-            f"- 用户任务: {incident['user_task']}\n"
-            f"  Root cause summary: {incident['root_cause']}\n"
-            f"  Tools: {', '.join(incident['tools_used'])}"
-            for incident in similar_incidents
-        )
-        if similar_incidents
-        else "No similar incident cases."
-    )
+    skill_context = _skill_context(matched_skills)
+    incident_context = _incident_context(similar_incidents)
 
     experience_docs = ""
     try:
         context_str = await retrieve_knowledge.ainvoke({"query": input_text})
-        if context_str and context_str.strip():
-            experience_docs = context_str
+        if context_str and str(context_str).strip():
+            experience_docs = str(context_str)
     except Exception as exc:  # pragma: no cover - best effort enrichment
         logger.warning(f"retrieve_knowledge failed in planner context: {exc}")
 
     tools_description = format_tools_description(all_tools)
     llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
-    planner_chain = planner_prompt | llm.with_structured_output(Plan)
+    planner_chain = generic_planner_prompt | llm.with_structured_output(GenericPlan)
 
     plan_result = await planner_chain.ainvoke(
         {
@@ -295,22 +365,24 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
         }
     )
 
-    plan_steps = plan_result.steps if isinstance(plan_result, Plan) else plan_result.get("steps", [])
-    trace_event = create_trace_event(
-        session_id=session_id,
-        node="planner",
-        status="success",
-        title=f"Planner generated {len(plan_steps)} steps",
-        result_summary=" | ".join(plan_steps[:3]),
-        metadata={
-            "matched_skills": [skill.get("name") for skill in matched_skills],
-            "similar_incidents": similar_incidents,
-        },
+    plan_steps = plan_result.steps if isinstance(plan_result, GenericPlan) else plan_result.get("steps", [])
+    trace_events.append(
+        create_trace_event(
+            session_id=session_id,
+            node="planner",
+            status="success",
+            title=f"Planner generated {len(plan_steps)} generic steps",
+            result_summary=" | ".join(plan_steps[:3]),
+            metadata={
+                "matched_skills": [skill.get("name") for skill in matched_skills],
+                "similar_incidents": similar_incidents,
+            },
+        )
     )
     return {
         "plan": plan_steps,
         "similar_incidents": similar_incidents,
         "active_alerts": active_alerts,
         "target_alert": target_alert,
-        "trace_events": alerts_trace_events + [trace_event],
+        "trace_events": trace_events,
     }

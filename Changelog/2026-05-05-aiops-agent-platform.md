@@ -44,3 +44,5 @@
 - 新增 `.env` 配置 `AIOPS_MAX_STEPS=8`，并接入后端 `replanner` 的最大执行步数控制，便于按环境调整诊断深度。
 - 修复 `disk_cleanup` AIOps 链路中的证据解析问题：Executor 现在会把 MCP 文本块结果先还原成结构化 JSON，再对 `get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates` 生成字段级摘要，避免前端只看到“共 1 项结果”。
 - 重写磁盘诊断报告生成与 Verifier 规则：报告不再输出 `unknown%` / `unknownGB` 占位，而是基于真实工具证据输出具体数值；缺失字段会明确写成“该字段未返回”；Verifier 对 `unknown`、证据与结论矛盾、Docker/目录/文件证据不足、cleanup_candidates 为空等情况会直接判定不通过。
+- 修复默认 AIOps 巡检在执行阶段报 `"'error'"` 的问题：默认巡检现在改为“固定告警发现 + 结构化 ToolPlanStep + Tool Policy 执行 + Replanner 补证据 + Verifier 校验”的受控自主链路，避免再次落回旧的自由 tool-calling 分支。
+- 默认巡检增强为确定性编排：第一步固定调用 `get_active_alerts` / `list_active_alerts` 选出最高 severity 的 `target_alert`；随后由 Planner 基于 `target_alert`、命中的 Skill、可用工具、Tool Policy 和 required evidence 生成 4-8 个结构化工具步骤，Executor 直接按步骤执行，前端也已支持把结构化计划渲染成可读文本。

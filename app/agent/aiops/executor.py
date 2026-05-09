@@ -19,6 +19,13 @@ from app.agent.aiops.disk_cleanup import (
     normalize_disk_tool_result,
     summarize_disk_tool_result,
 )
+from app.agent.aiops.patrol import (
+    parse_tool_plan_step,
+    parse_tool_results_from_history,
+    resolve_structured_step_args,
+    step_label_from_plan,
+    summarize_structured_tool_result,
+)
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.tool_policy import check_tool_policy
 from app.agent.aiops.trace import create_trace_event, summarize_result
@@ -32,9 +39,15 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _to_result_text(payload: Any) -> str:
+    if isinstance(payload, str):
+        return payload
+    return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
 async def _execute_tool_directly(
     session_id: str,
-    task: str,
+    task_label: str,
     tool_name: str,
     tool: Any,
     args: dict[str, Any],
@@ -42,22 +55,27 @@ async def _execute_tool_directly(
 ) -> dict[str, Any]:
     started_at = _now_iso()
     started_ts = time.perf_counter()
-    tool_result = await invoke_tool(tool, args)
-    normalized_result = normalize_disk_tool_result(tool_name, tool_result)
+    status = "success"
+    try:
+        tool_result = await invoke_tool(tool, args)
+        normalized_result = normalize_disk_tool_result(tool_name, tool_result)
+    except Exception as exc:
+        normalized_result = {"error": str(exc), "tool": tool_name, "args": args}
+        status = "error"
     duration_ms = int((time.perf_counter() - started_ts) * 1000)
     ended_at = _now_iso()
-    result_text = json.dumps(normalized_result, ensure_ascii=False, indent=2)
+    result_text = _to_result_text(normalized_result)
     result_summary = summarize_disk_tool_result(tool_name, normalized_result)
     return {
         "plan": [],
         "status": "running",
-        "past_steps": [(task, result_text)],
+        "past_steps": [(task_label, result_text)],
         "tools_used": [tool_name],
         "trace_events": [
             create_trace_event(
                 session_id=session_id,
                 node="tool_call",
-                status="success",
+                status=status,
                 title=f"Executed {tool_name}",
                 tool_name=tool_name,
                 tool_args=args,
@@ -70,8 +88,144 @@ async def _execute_tool_directly(
             create_trace_event(
                 session_id=session_id,
                 node="executor",
-                status="success",
-                title="Disk evidence step executed",
+                status=status,
+                title="Deterministic step executed",
+                result_summary=result_summary,
+            ),
+        ],
+    }
+
+
+async def _execute_structured_step(
+    state: PlanExecuteState,
+    *,
+    step_index: int,
+    step_payload: dict[str, Any],
+    tool_map: dict[str, Any],
+) -> dict[str, Any]:
+    session_id = state.get("session_id", "default")
+    remaining_plan = list(state.get("plan", []))[step_index + 1 :]
+    structured_step = parse_tool_plan_step(step_payload)
+    if structured_step is None:
+        return {}
+
+    tool_name = structured_step.tool
+    decision = check_tool_policy(tool_name)
+    task_label = step_label_from_plan(step_payload)
+    resolved_args = resolve_structured_step_args(
+        structured_step,
+        state=state,
+        previous_results=parse_tool_results_from_history(state.get("past_steps", [])),
+    )
+
+    if decision["decision"] == "reject":
+        result_payload = {"error": decision["reason"], "tool": tool_name, "args": resolved_args}
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, _to_result_text(result_payload))],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="tool_call",
+                    status="error",
+                    title="Blocked tool rejected",
+                    tool_name=tool_name,
+                    tool_args=resolved_args,
+                    result_summary=decision["reason"],
+                    metadata={"level": decision["level"], "execution_mode": "structured"},
+                )
+            ],
+        }
+
+    if decision["decision"] == "approval_required":
+        action_id = str(uuid.uuid4())
+        action = {
+            "action_id": action_id,
+            "step": task_label,
+            "tool_name": tool_name,
+            "tool_args_summary": summarize_result(resolved_args),
+            "tool_calls": [{"name": tool_name, "args": resolved_args}],
+            "reason": decision["reason"],
+            "status": "pending",
+            "created_at": _now_iso(),
+        }
+        return {
+            "pending_action": action,
+            "status": "paused",
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="approval",
+                    status="pending",
+                    title="Dangerous tool approval required",
+                    tool_name=tool_name,
+                    tool_args=resolved_args,
+                    result_summary=decision["reason"],
+                    metadata={"action_id": action_id, "execution_mode": "structured"},
+                )
+            ],
+        }
+
+    tool = tool_map.get(tool_name)
+    if tool is None:
+        result_payload = {"error": f"Tool not found: {tool_name}", "tool": tool_name, "args": resolved_args}
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, _to_result_text(result_payload))],
+            "tools_used": [tool_name],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="tool_call",
+                    status="error",
+                    title="Structured tool missing",
+                    tool_name=tool_name,
+                    tool_args=resolved_args,
+                    result_summary=result_payload["error"],
+                    metadata={"level": decision["level"], "execution_mode": "structured"},
+                )
+            ],
+        }
+
+    started_at = _now_iso()
+    started_ts = time.perf_counter()
+    status = "success"
+    try:
+        tool_result = await invoke_tool(tool, resolved_args)
+        normalized_result = normalize_disk_tool_result(tool_name, tool_result)
+    except Exception as exc:
+        normalized_result = {"error": str(exc), "tool": tool_name, "args": resolved_args}
+        status = "error"
+    duration_ms = int((time.perf_counter() - started_ts) * 1000)
+    ended_at = _now_iso()
+    result_summary = summarize_structured_tool_result(tool_name, normalized_result)
+
+    return {
+        "plan": remaining_plan,
+        "status": "running",
+        "past_steps": [(task_label, _to_result_text(normalized_result))],
+        "tools_used": [tool_name],
+        "trace_events": [
+            create_trace_event(
+                session_id=session_id,
+                node="tool_call",
+                status=status,
+                title=f"Executed {tool_name}",
+                tool_name=tool_name,
+                tool_args=resolved_args,
+                result_summary=result_summary,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                metadata={"level": decision["level"], "execution_mode": "structured"},
+            ),
+            create_trace_event(
+                session_id=session_id,
+                node="executor",
+                status=status,
+                title="Structured plan step executed",
                 result_summary=result_summary,
             ),
         ],
@@ -81,12 +235,13 @@ async def _execute_tool_directly(
 async def executor(state: PlanExecuteState) -> dict[str, Any]:
     """LangGraph node: execute the current plan step."""
     logger.info("=== Executor ===")
-    plan = state.get("plan", [])
+    plan = list(state.get("plan", []))
     if not plan:
         return {}
 
     session_id = state.get("session_id", "default")
-    task = plan[0]
+    current_step = plan[0]
+    task_label = current_step if isinstance(current_step, str) else step_label_from_plan(current_step)
     remaining_plan = plan[1:]
 
     local_tools = [get_current_time, retrieve_knowledge]
@@ -95,14 +250,18 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
     all_tools = local_tools + mcp_tools
     tool_map = {tool.name if hasattr(tool, "name") else str(tool): tool for tool in all_tools}
 
-    disk_tool_name = extract_disk_tool_name(task)
+    structured_step = parse_tool_plan_step(current_step)
+    if structured_step is not None:
+        return await _execute_structured_step(state, step_index=0, step_payload=current_step, tool_map=tool_map)
+
+    disk_tool_name = extract_disk_tool_name(task_label)
     if disk_tool_name and is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
         decision = check_tool_policy(disk_tool_name)
         if decision["decision"] == "reject":
             return {
                 "plan": remaining_plan,
                 "status": "running",
-                "past_steps": [(task, decision["reason"])],
+                "past_steps": [(task_label, decision["reason"])],
                 "trace_events": [
                     create_trace_event(
                         session_id=session_id,
@@ -118,11 +277,26 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
 
         tool = tool_map.get(disk_tool_name)
         if tool is None:
-            raise RuntimeError(f"Tool not found: {disk_tool_name}")
+            return {
+                "plan": remaining_plan,
+                "status": "running",
+                "past_steps": [(task_label, _to_result_text({"error": f"Tool not found: {disk_tool_name}"}))],
+                "trace_events": [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="tool_call",
+                        status="error",
+                        title="Disk tool not found",
+                        tool_name=disk_tool_name,
+                        tool_args=DISK_TOOL_ARGS.get(disk_tool_name, {}),
+                        result_summary=f"Tool not found: {disk_tool_name}",
+                    )
+                ],
+            }
 
         direct_result = await _execute_tool_directly(
             session_id=session_id,
-            task=task,
+            task_label=task_label,
             tool_name=disk_tool_name,
             tool=tool,
             args=DISK_TOOL_ARGS.get(disk_tool_name, {}),
@@ -136,11 +310,11 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
     messages = [
         SystemMessage(
             content=(
-                "你是 AIOps Executor。请针对当前步骤选择合适工具，先调用工具采集证据，再基于结果返回简洁结论。"
-                "不要声称执行了删除、重启或破坏性操作，除非工具结果明确表明真的执行了。"
+                "You are the AIOps Executor. Execute the current step with tools when needed. "
+                "Use tools conservatively and return concrete evidence only."
             )
         ),
-        HumanMessage(content=f"请执行这个诊断步骤：{task}"),
+        HumanMessage(content=f"Current step: {task_label}\nOriginal task: {state.get('input', '')}"),
     ]
 
     pending_action = state.get("pending_action")
@@ -157,12 +331,12 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
             messages.append(llm_response)
 
         if pending_action and approval_status == "rejected":
-            result = "人工审批拒绝了危险工具调用，本步骤未执行高风险操作。"
+            result = "危险工具审批被拒绝，本次未执行该操作。"
             return {
                 "plan": remaining_plan,
                 "pending_action": None,
                 "status": "running",
-                "past_steps": [(task, result)],
+                "past_steps": [(task_label, result)],
                 "trace_events": [
                     create_trace_event(
                         session_id=session_id,
@@ -193,7 +367,7 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
             return {
                 "plan": remaining_plan,
                 "status": "running",
-                "past_steps": [(task, result)],
+                "past_steps": [(task_label, result)],
                 "trace_events": [
                     create_trace_event(
                         session_id=session_id,
@@ -212,7 +386,7 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
             action_id = str(uuid.uuid4())
             action = {
                 "action_id": action_id,
-                "step": task,
+                "step": task_label,
                 "tool_name": dangerous_tool.get("name", "unknown"),
                 "tool_args_summary": summarize_result(dangerous_tool.get("args", {})),
                 "tool_calls": tool_calls,
@@ -245,69 +419,78 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
             args = tool_call.get("args", {})
             tool = tool_map.get(tool_name)
             if tool is None:
-                raise RuntimeError(f"Tool not found: {tool_name}")
+                payload = {"error": f"Tool not found: {tool_name}", "tool": tool_name, "args": args}
+                tool_result = payload
+                status = "error"
+            else:
+                status = "success"
+                try:
+                    tool_result = await invoke_tool(tool, args)
+                except Exception as exc:
+                    tool_result = {"error": str(exc), "tool": tool_name, "args": args}
+                    status = "error"
 
-            started_at = _now_iso()
-            started_ts = time.perf_counter()
-            tool_result = await invoke_tool(tool, args)
-            duration_ms = int((time.perf_counter() - started_ts) * 1000)
-            ended_at = _now_iso()
+            tools_used.append(tool_name)
+            result_summary = summarize_structured_tool_result(tool_name, tool_result)
             trace_events.append(
                 create_trace_event(
                     session_id=session_id,
                     node="tool_call",
-                    status="success",
+                    status=status,
                     title=f"Executed {tool_name}",
                     tool_name=tool_name,
                     tool_args=args,
-                    result_summary=summarize_result(tool_result),
-                    started_at=started_at,
-                    ended_at=ended_at,
-                    duration_ms=duration_ms,
-                    metadata={"level": decision["level"]},
+                    result_summary=result_summary,
+                    metadata={"level": decision["level"], "execution_mode": "llm_fallback"},
                 )
             )
-            tools_used.append(tool_name)
-            tool_messages.append(
-                ToolMessage(
-                    content=summarize_result(tool_result, max_length=800),
-                    tool_call_id=tool_call.get("id") or tool_name,
+            if llm_response is not None:
+                tool_messages.append(
+                    ToolMessage(
+                        content=json.dumps(tool_result, ensure_ascii=False),
+                        tool_call_id=tool_call.get("id", tool_name),
+                    )
                 )
-            )
 
-        messages.extend(tool_messages)
-        final_response = await llm_with_tools.ainvoke(messages)
-        result = final_response.content if hasattr(final_response, "content") else str(final_response)
+        if llm_response is not None:
+            follow_up = await llm_with_tools.ainvoke(messages + tool_messages)
+            result_text = follow_up.content if isinstance(follow_up.content, str) else json.dumps(follow_up.content, ensure_ascii=False)
+        else:
+            result_text = "\n".join(trace.get("result_summary", "") for trace in trace_events if trace.get("result_summary"))
+
         return {
             "plan": remaining_plan,
-            "pending_action": None,
             "status": "running",
-            "past_steps": [(task, result)],
+            "past_steps": [(task_label, result_text)],
             "tools_used": tools_used,
+            "pending_action": None,
             "trace_events": trace_events
             + [
                 create_trace_event(
                     session_id=session_id,
                     node="executor",
                     status="success",
-                    title="Step executed with tool evidence",
-                    result_summary=summarize_result(result),
+                    title="Executor completed fallback step",
+                    result_summary=result_text[:240],
                 )
             ],
         }
 
-    result = llm_response.content if hasattr(llm_response, "content") else str(llm_response)
+    result_text = ""
+    if llm_response is not None:
+        content = llm_response.content
+        result_text = content if isinstance(content, str) else json.dumps(content, ensure_ascii=False)
     return {
         "plan": remaining_plan,
         "status": "running",
-        "past_steps": [(task, result)],
+        "past_steps": [(task_label, result_text or "No tool call was required.")],
         "trace_events": [
             create_trace_event(
                 session_id=session_id,
                 node="executor",
                 status="success",
-                title="Step executed without tools",
-                result_summary=summarize_result(result),
+                title="Executor completed without tool call",
+                result_summary=(result_text or "No tool call was required.")[:240],
             )
         ],
     }

@@ -435,6 +435,25 @@ class SuperBizAgentApp {
         return text.replace(/"type"\s*:\s*".*?"/gi, "").replace(/"test"\s*:\s*".*?"/gi, "").slice(0, 160);
     }
 
+    formatPlanStep(step, index) {
+        if (!step || typeof step !== "object" || Array.isArray(step)) {
+            return `${index + 1}. ${step}`;
+        }
+        const tool = step.tool || "unknown_tool";
+        const evidenceType = step.evidence_type ? `[${step.evidence_type}] ` : "";
+        const reason = step.reason ? ` - ${step.reason}` : "";
+        const args =
+            step.args && typeof step.args === "object" && !Array.isArray(step.args)
+                ? Object.entries(step.args)
+                      .filter(([, value]) => value !== "" && value != null)
+                      .slice(0, 4)
+                      .map(([key, value]) => `${key}=${value}`)
+                      .join(", ")
+                : "";
+        const suffix = args ? ` (${args})` : "";
+        return `${index + 1}. ${evidenceType}${tool}${suffix}${reason}`;
+    }
+
     buildAIOpsMarkdown({ final = false } = {}) {
         const state = this.ensureAIOpsState();
         const lines = [];
@@ -452,7 +471,7 @@ class SuperBizAgentApp {
         if (Array.isArray(state.plan) && state.plan.length) {
             lines.push("");
             lines.push("## 诊断计划");
-            state.plan.forEach((step, index) => lines.push(`${index + 1}. ${step}`));
+            state.plan.forEach((step, index) => lines.push(this.formatPlanStep(step, index)));
         }
 
         if (state.steps.length) {

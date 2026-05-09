@@ -27,12 +27,13 @@ from app.agent.aiops.patrol import (
     summarize_structured_tool_result,
 )
 from app.agent.aiops.state import PlanExecuteState
+from app.agent.aiops.tool_registry import get_aiops_local_tools
 from app.agent.aiops.tool_policy import check_tool_policy
 from app.agent.aiops.trace import create_trace_event, summarize_result
-from app.agent.aiops.utils import invoke_tool
+from app.agent.aiops.utils import invoke_tool, unwrap_tool_result
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
-from app.tools import get_current_time, retrieve_knowledge
+from app.core.llm_factory import llm_factory
 
 
 def _now_iso() -> str:
@@ -43,6 +44,168 @@ def _to_result_text(payload: Any) -> str:
     if isinstance(payload, str):
         return payload
     return json.dumps(payload, ensure_ascii=False, indent=2)
+
+
+def _history_snippets(past_steps: list[tuple[str, str]], *, limit: int = 2) -> list[str]:
+    snippets: list[str] = []
+    for _, raw_result in reversed(past_steps):
+        parsed = unwrap_tool_result(raw_result)
+        if isinstance(parsed, dict) and parsed.get("content"):
+            text = str(parsed.get("content", "")).strip()
+        else:
+            text = str(parsed).strip()
+        if text.startswith("已整理当前证据并准备生成结论与建议。"):
+            continue
+        if text:
+            snippets.append(text.replace("\n", " ")[:180])
+        if len(snippets) >= limit:
+            break
+    return snippets
+
+
+def _generic_template_tool_name(task_label: str) -> str | None:
+    if "retrieve_knowledge" in task_label:
+        return "retrieve_knowledge"
+    if "web_search" in task_label:
+        return "web_search"
+    return None
+
+
+def _build_generic_query(state: PlanExecuteState, tool_name: str) -> str:
+    task = str(state.get("input", "")).strip() or "AIOps custom diagnosis"
+    if tool_name == "web_search" and "docker" in task.lower():
+        return f"{task} Docker official documentation troubleshooting"
+    return task
+
+
+def _build_generic_template_note(task_label: str, state: PlanExecuteState) -> str:
+    lower_label = task_label.lower()
+    snippets = _history_snippets(list(state.get("past_steps", [])))
+    snippet_text = "；".join(snippets) if snippets else "当前步骤之前没有收集到可复用的资料片段。"
+
+    if any(token in lower_label for token in ("镜像", "标签", "仓库", "冲突")):
+        return (
+            "已基于当前已收集资料整理排查关注点："
+            "优先核对镜像名称、标签、仓库来源、镜像拉取策略以及同名不同仓库镜像混用情况。"
+            f"参考摘要：{snippet_text} 当前步骤仅做分析整理，未执行任何镜像删除、覆盖、pull、prune 或 rm 操作。"
+        )
+
+    return (
+        "已整理当前证据并准备生成结论与建议。"
+        f"参考摘要：{snippet_text} 当前流程仅进行了资料检索与分析，未执行任何危险操作。"
+    )
+
+
+async def _execute_generic_template_step(
+    state: PlanExecuteState,
+    *,
+    task_label: str,
+    remaining_plan: list[Any],
+    tool_map: dict[str, Any],
+) -> dict[str, Any]:
+    session_id = state.get("session_id", "default")
+    tool_name = _generic_template_tool_name(task_label)
+
+    if tool_name is None:
+        note = _build_generic_template_note(task_label, state)
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, note)],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="executor",
+                    status="success",
+                    title="Template fallback step summarized",
+                    result_summary=note[:240],
+                    metadata={"execution_mode": "generic_template_fallback"},
+                )
+            ],
+        }
+
+    decision = check_tool_policy(tool_name)
+    if decision["decision"] == "reject":
+        result_text = decision["reason"]
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, result_text)],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="tool_call",
+                    status="error",
+                    title="Template fallback tool rejected",
+                    tool_name=tool_name,
+                    tool_args={"query": _build_generic_query(state, tool_name)},
+                    result_summary=result_text,
+                    metadata={"execution_mode": "generic_template_fallback"},
+                )
+            ],
+        }
+
+    tool = tool_map.get(tool_name)
+    if tool is None:
+        result_payload = {"error": f"Tool not found: {tool_name}", "tool": tool_name}
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, _to_result_text(result_payload))],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="tool_call",
+                    status="error",
+                    title="Template fallback tool missing",
+                    tool_name=tool_name,
+                    result_summary=result_payload["error"],
+                    metadata={"execution_mode": "generic_template_fallback"},
+                )
+            ],
+        }
+
+    args = {"query": _build_generic_query(state, tool_name)}
+    started_at = _now_iso()
+    started_ts = time.perf_counter()
+    status = "success"
+    try:
+        tool_result = await invoke_tool(tool, args)
+    except Exception as exc:
+        tool_result = {"error": str(exc), "tool": tool_name, "args": args}
+        status = "error"
+    duration_ms = int((time.perf_counter() - started_ts) * 1000)
+    ended_at = _now_iso()
+    result_summary = summarize_structured_tool_result(tool_name, tool_result)
+
+    return {
+        "plan": remaining_plan,
+        "status": "running",
+        "past_steps": [(task_label, _to_result_text(tool_result))],
+        "tools_used": [tool_name],
+        "trace_events": [
+            create_trace_event(
+                session_id=session_id,
+                node="tool_call",
+                status=status,
+                title=f"Executed {tool_name}",
+                tool_name=tool_name,
+                tool_args=args,
+                result_summary=result_summary,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                metadata={"level": decision["level"], "execution_mode": "generic_template_fallback"},
+            ),
+            create_trace_event(
+                session_id=session_id,
+                node="executor",
+                status=status,
+                title="Template fallback step executed",
+                result_summary=result_summary,
+            ),
+        ],
+    }
 
 
 async def _execute_tool_directly(
@@ -244,11 +407,18 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
     task_label = current_step if isinstance(current_step, str) else step_label_from_plan(current_step)
     remaining_plan = plan[1:]
 
-    local_tools = [get_current_time, retrieve_knowledge]
+    local_tools = get_aiops_local_tools()
     mcp_client = await get_mcp_client_with_retry()
     mcp_tools = await mcp_client.get_tools()
     all_tools = local_tools + mcp_tools
     tool_map = {tool.name if hasattr(tool, "name") else str(tool): tool for tool in all_tools}
+    if state.get("plan_source") == "generic_template_fallback":
+        return await _execute_generic_template_step(
+            state,
+            task_label=task_label,
+            remaining_plan=remaining_plan,
+            tool_map=tool_map,
+        )
 
     structured_step = parse_tool_plan_step(current_step)
     if structured_step is not None:
@@ -305,26 +475,52 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
         direct_result["plan"] = remaining_plan
         return direct_result
 
-    llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
-    llm_with_tools = llm.bind_tools(all_tools)
-    messages = [
-        SystemMessage(
-            content=(
-                "You are the AIOps Executor. Execute the current step with tools when needed. "
-                "Use tools conservatively and return concrete evidence only."
-            )
-        ),
-        HumanMessage(content=f"Current step: {task_label}\nOriginal task: {state.get('input', '')}"),
-    ]
+    try:
+        llm = llm_factory.create_qwen_chat_model(
+            preferred_model=config.rag_model,
+            temperature=0,
+            streaming=True,
+        )
+        llm_with_tools = llm.bind_tools(all_tools)
+        messages = [
+            SystemMessage(
+                content=(
+                    "You are the AIOps Executor. Execute the current step with tools when needed. "
+                    "Use tools conservatively and return concrete evidence only."
+                )
+            ),
+            HumanMessage(content=f"Current step: {task_label}\nOriginal task: {state.get('input', '')}"),
+        ]
 
-    pending_action = state.get("pending_action")
-    approval_status = pending_action.get("status") if isinstance(pending_action, dict) else None
-    if pending_action and approval_status in {"approved", "rejected"}:
-        llm_response = None
-        tool_calls = list(pending_action.get("tool_calls", []))
-    else:
-        llm_response = await llm_with_tools.ainvoke(messages)
-        tool_calls = list(getattr(llm_response, "tool_calls", []) or [])
+        pending_action = state.get("pending_action")
+        approval_status = pending_action.get("status") if isinstance(pending_action, dict) else None
+        if pending_action and approval_status in {"approved", "rejected"}:
+            llm_response = None
+            tool_calls = list(pending_action.get("tool_calls", []))
+        else:
+            llm_response = await llm_with_tools.ainvoke(messages)
+            tool_calls = list(getattr(llm_response, "tool_calls", []) or [])
+    except Exception as exc:
+        logger.warning(f"Executor tool-calling failed, degrade to deterministic summary: {exc}")
+        fallback_result = await _execute_generic_template_step(
+            state,
+            task_label=task_label,
+            remaining_plan=remaining_plan,
+            tool_map=tool_map,
+        )
+        trace_events = list(fallback_result.get("trace_events", []))
+        trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="executor",
+                status="warning",
+                title="Executor degraded to template fallback",
+                result_summary=str(exc)[:240],
+                metadata={"reason": str(exc)},
+            )
+        )
+        fallback_result["trace_events"] = trace_events
+        return fallback_result
 
     if tool_calls:
         if llm_response is not None:

@@ -46,3 +46,11 @@
 - 重写磁盘诊断报告生成与 Verifier 规则：报告不再输出 `unknown%` / `unknownGB` 占位，而是基于真实工具证据输出具体数值；缺失字段会明确写成“该字段未返回”；Verifier 对 `unknown`、证据与结论矛盾、Docker/目录/文件证据不足、cleanup_candidates 为空等情况会直接判定不通过。
 - 修复默认 AIOps 巡检在执行阶段报 `"'error'"` 的问题：默认巡检现在改为“固定告警发现 + 结构化 ToolPlanStep + Tool Policy 执行 + Replanner 补证据 + Verifier 校验”的受控自主链路，避免再次落回旧的自由 tool-calling 分支。
 - 默认巡检增强为确定性编排：第一步固定调用 `get_active_alerts` / `list_active_alerts` 选出最高 severity 的 `target_alert`；随后由 Planner 基于 `target_alert`、命中的 Skill、可用工具、Tool Policy 和 required evidence 生成 4-8 个结构化工具步骤，Executor 直接按步骤执行，前端也已支持把结构化计划渲染成可读文本。
+- 为 AIOps Agent 新增可配置的 `web_search` 联网搜索工具：基于 Tavily Search API，通过 `WEB_SEARCH_ENABLED` / `TAVILY_API_KEY` 按 `.env` 开关启用，仅注册到 AIOps 本地工具列表，不接入普通 `rag_agent_service.py`。
+- 联网搜索证据链打通到 AIOps Planner / Replanner / Verifier：当本地 Runbook 不足时可以补充 `web_search`，但只能作为外部公开资料参考，不能替代本地监控、日志、工单证据；若使用了联网资料，最终报告会新增“联网搜索补充资料”段落，并要求包含标题、链接、摘要和用途说明。
+- 修复自定义 AIOps 诊断在通用 Planner 路径上报 `"'error'"` 的问题：为通用 Planner 增加异常回退计划，并加强 `/api/aiops` SSE 事件的安全序列化，避免单条异常事件或结构化输出异常直接打断整条诊断流。
+- 继续修复自定义诊断 `docker镜像冲突怎么办` 这类场景的 `"'error'"` 崩溃：日志显示问题发生在 Planner 模板兜底后的 Executor 自由 tool-calling 分支，因此为 `generic_template_fallback` 增加了专用的确定性执行/汇总/报告/Verifier 链路。现在模板兜底计划会先打上 `plan_source` 标记，Executor 会直接执行 `retrieve_knowledge` / `web_search` 或输出基于已收集证据的整理说明，Replanner 会在计划耗尽后生成稳定的 Markdown 报告，Verifier 也会专门检查“是否明确声明未执行危险操作”“是否正确区分联网资料”等最低要求，不再依赖同一条可能失效的模型调用链。
+- 修复模板兜底链路的自我循环问题：`generic_template_fallback` 在 Verifier 不通过时不再把同一条文字建议反复回灌成新计划；同时统一了模板报告与 Verifier 对“未执行任何危险操作”的措辞识别，并跳过对“已整理当前证据...”这类摘要的递归引用，避免 Agent Trace 和步骤摘要指数级膨胀。
+- 为 `runtime_store` 增加持久化瘦身：限制 `past_steps`、`trace_events`、`response`、`verifier_result` 的持久化长度，避免长会话把 `runtime_sessions/<session_id>.json` 持续写大并再次触发 Windows 文件写入异常。
+- 梳理普通 RAG Chat 与 AIOps 的 LLM 配置来源：新增独立的 `LLM_API_KEY`、`LLM_API_BASE`、`LLM_MODEL` 读取逻辑，并让 `rag_agent_service`、AIOps `planner/executor/replanner/verifier` 统一通过 `llm_factory.create_qwen_chat_model()` 创建模型实例，避免继续把旧的 `RAG_MODEL` 与另一家厂商的 `API key/base` 混用导致 401 鉴权错误。
+- 调整 AIOps 最终报告渲染：前端最终态不再把“模式 / 任务 / 当前状态 / 诊断计划 / 执行步骤 / Verifier”继续包在报告正文外层，而是只展示后端生成的最终 Markdown 报告；同时收紧通用模板报告内容，去掉重复的任务段，保留结论、证据、建议和风险提示。

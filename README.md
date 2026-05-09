@@ -499,3 +499,11 @@ MIT License
 - 磁盘现场数据来自 `mock_data/disk.json`，由 `mcp_servers/monitor_server.py` 中新增的只读工具提供，包括：`get_disk_usage`、`list_large_directories`、`list_large_files`、`query_deleted_open_files`、`query_docker_disk_usage`、`get_disk_cleanup_candidates`。
 - 这些工具全部是只读 mock 工具，不会执行 shell，也不会删除任何文件。
 - `aiops-docs/` 中的内容仍然只是上传到 RAG 的 runbook 文档，用于补充清理原则与风险提示，不代表实时日志或实时监控数据。
+### AIOps è”ç½‘æœç´¢è¡¥å……è¯´æ˜Ž
+
+- `web_search` åªä¼šæŽ¥å…¥ AIOps Agentï¼Œä¸ä¼šæŽ¥å…¥æ™®é€š RAG Chatã€‚
+- é»˜è®¤é€šè¿‡ `.env` å…³é—­ï¼Œåªæœ‰ `WEB_SEARCH_ENABLED=true` ä¸” `TAVILY_API_KEY` æœ‰æ•ˆæ—¶æ‰ä¼šåŠ å…¥ AIOps å·¥å…·åˆ—è¡¨ã€‚
+- AIOps ä¼šä¼˜å…ˆä½¿ç”¨æœ¬åœ°ç›‘æŽ§ã€�æ—¥å¿—ã€�å·¥å•å’Œ `retrieve_knowledge`ã€‚
+- `web_search` åªèƒ½ç”¨äºŽè¡¥å…… Runbookã€�å…¬å¼€é”™è¯¯ç è¯´æ˜Žã€�å®˜æ–¹æ–‡æ¡£æˆ–å…¬å¼€æŽ’éšœèµ„æ–™ï¼Œä¸èƒ½æ›¿ä»£æœ¬åœ°è¯æ®ã€‚
+- å¦‚æžœæŠ¥å‘Šå¼•ç”¨äº† `web_search`ï¼ŒAIOps æœ€ç»ˆæŠ¥å‘Šä¼šåœ¨â€œ## è”ç½‘æœç´¢è¡¥å……èµ„æ–™â€ä¸­åˆ—å‡ºæ ‡é¢˜ã€�é“¾æŽ¥ã€�æ‘˜è¦å’Œç”¨é€”ã€‚
+- `aiops-docs` æ˜¯ä¸Šä¼ åˆ° RAG çŸ¥è¯†åº“çš„ runbook æ–‡æ¡£ç›®å½•ï¼Œä¸æ˜¯å®žæ—¶æ—¥å¿—æ•°æ®ã€‚

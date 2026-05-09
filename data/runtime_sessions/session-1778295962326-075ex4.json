@@ -1,0 +1,118 @@
+{
+  "session_id": "session-1778295962326-075ex4",
+  "status": "running",
+  "updated_at": "2026-05-09T03:06:11.588998+00:00",
+  "state": {
+    "session_id": "session-1778295962326-075ex4",
+    "input": "docker镜像冲突怎么办",
+    "mode": "custom",
+    "entry_node": "skill_router",
+    "status": "running",
+    "plan": [
+      "调用 retrieve_knowledge 检索相关本地 Runbook、经验文档和处理建议",
+      "结合本地知识确认镜像名称、标签、仓库来源和冲突触发条件",
+      "如本地 Runbook 不足，再调用 web_search 查询 Docker 官方文档或公开排障资料",
+      "整理冲突原因、影响范围和安全处理建议，明确哪些操作需要人工确认"
+    ],
+    "past_steps": [],
+    "response": "",
+    "matched_skills": [],
+    "similar_incidents": [
+      {
+        "session_id": "session-1778243885384-v4l4f4",
+        "user_task": "服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议",
+        "matched_skills": [
+          "disk_cleanup"
+        ],
+        "tools_used": [
+          "get_disk_usage",
+          "list_large_directories",
+          "list_large_files",
+          "query_deleted_open_files",
+          "query_docker_disk_usage",
+          "get_disk_cleanup_candidates",
+          "retrieve_knowledge"
+        ],
+        "root_cause": "# AIOps 磁盘清理诊断报告\n\n        ## 用户任务\n        - 服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议\n\n        ## 磁盘使用率证据\n        - 主机 `demo-server-01` 的挂载点 `/` 当前使用率为 **92.4%**。\n        - 已使用 **184.8GB / 200GB**，剩余可用空间 **15.2GB**。\n        - 当前状态：`critical`。\n\n        ## T",
+        "score": 0.4413
+      },
+      {
+        "session_id": "session-1778227492392-q5zgrv",
+        "user_task": "服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议",
+        "matched_skills": [
+          "disk_cleanup"
+        ],
+        "tools_used": [
+          "retrieve_knowledge",
+          "list_all_services",
+          "retrieve_knowledge",
+          "list_all_services",
+          "get_active_alerts",
+          "list_all_services"
+        ],
+        "root_cause": "# 服务器磁盘使用率过高 - 综合清理与排查指南\n\n## 📋 执行概况说明\n\n**当前状态**：由于工具限制，无法直接在目标服务器上执行 `df -h`、`du`、`find` 等文件系统命令，也无法直接创建快照或备份。\n\n**已完成工作**：\n- ✅ 检索了磁盘清理的最佳实践和常见原因分析\n- ✅ 生成了通用的磁盘清理报告和排查命令清单\n- ⚠️ **未完成**：实际磁盘使用数据获取、具体大文件定位、进程占用检查、数据备份操作\n\n**建议**：以下方案需要您通过 SSH 登",
+        "score": 0.43
+      },
+      {
+        "session_id": "session-1778239599828-0s9mwc",
+        "user_task": "服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议",
+        "matched_skills": [
+          "disk_cleanup"
+        ],
+        "tools_used": [
+          "get_disk_usage",
+          "list_large_directories",
+          "list_large_files",
+          "query_deleted_open_files",
+          "query_docker_disk_usage",
+          "get_disk_cleanup_candidates",
+          "retrieve_knowledge"
+        ],
+        "root_cause": "# AIOps 磁盘清理诊断报告\n\n        ## 用户任务\n        - 服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议\n\n        ## 磁盘使用率证据\n        - 主机 `demo-server-01` 的挂载点 `/` 当前使用率为 **unknown%**。\n        - 已使用 **unknownGB / unknownGB**，剩余可用空间仅 **unknownGB**。\n        - 这已经属于高水位状态，若继续增长，",
+        "score": 0.4222
+      }
+    ],
+    "trace_events": [
+      {
+        "trace_id": "27189caa-b2c1-41cb-b0ba-83585a6bfe0b",
+        "session_id": "session-1778295962326-075ex4",
+        "node": "skill_router",
+        "status": "success",
+        "title": "Matched 0 skills",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "No skills matched",
+        "started_at": "2026-05-09T03:06:09.950136+00:00",
+        "ended_at": "2026-05-09T03:06:09.950136+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "matched_skills": []
+        }
+      },
+      {
+        "trace_id": "b773814e-abd1-47a9-b00e-e2085cb4a8df",
+        "session_id": "session-1778295962326-075ex4",
+        "node": "planner",
+        "status": "warning",
+        "title": "Generic planner fallback plan generated",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "调用 retrieve_knowledge 检索相关本地 Runbook、经验文档和处理建议 | 结合本地知识确认镜像名称、标签、仓库来源和冲突触发条件 | 如本地 Runbook 不足，再调用 web_search 查询 Docker 官方文档或公开排障资料",
+        "started_at": "2026-05-09T03:06:11.587004+00:00",
+        "ended_at": "2026-05-09T03:06:11.587004+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "reason": "Error code: 401 - {'error': {'code': 'AuthenticationError', 'message': 'The API key format is incorrect. Request id: 021778295970725887c7cd2f4ed17c23c5755148c87adbee898d3', 'param': '', 'type': 'Unauthorized'}}"
+        }
+      }
+    ],
+    "tools_used": [],
+    "verifier_result": {},
+    "pending_action": null,
+    "active_alerts": [],
+    "target_alert": null,
+    "incident_record": {},
+    "feedback": {},
+    "generated_skill_draft": null
+  }
+}

@@ -11,6 +11,8 @@
 """
 
 from langchain_openai import ChatOpenAI
+from langchain_qwq import ChatQwen
+
 from app.config import config
 from loguru import logger
 
@@ -29,9 +31,9 @@ class LLMFactory:
         base_url: str | None = None,
         api_key: str | None = None,
     ) -> ChatOpenAI:
-        model = model or config.dashscope_model
-        base_url = base_url or LLMFactory.DASHSCOPE_BASE_URL
-        api_key = api_key or config.dashscope_api_key
+        model = model or config.get_llm_model()
+        base_url = base_url or config.get_llm_api_base() or LLMFactory.DASHSCOPE_BASE_URL
+        api_key = api_key or config.get_llm_api_key()
 
         # 参考：https://help.aliyun.com/zh/model-studio/getting-started/models
         extra_body = {}
@@ -47,6 +49,26 @@ class LLMFactory:
         )
 
         return llm
+
+    @staticmethod
+    def create_qwen_chat_model(
+        preferred_model: str | None = None,
+        temperature: float = 0.7,
+        streaming: bool = True,
+        api_key: str | None = None,
+        base_url: str | None = None,
+    ) -> ChatQwen:
+        """Create a ChatQwen instance with dedicated LLM config."""
+        model = config.get_llm_model(preferred_model or "")
+        client_key = (api_key or config.get_llm_api_key()).strip()
+        client_base = (base_url or config.get_llm_api_base()).strip()
+        return ChatQwen(
+            model=model,
+            api_key=client_key,
+            base_url=client_base,
+            temperature=temperature,
+            streaming=streaming,
+        )
 
 # 全局 LLM 工厂实例
 llm_factory = LLMFactory()

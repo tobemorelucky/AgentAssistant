@@ -456,6 +456,12 @@ class SuperBizAgentApp {
 
     buildAIOpsMarkdown({ final = false } = {}) {
         const state = this.ensureAIOpsState();
+        if (final) {
+            const sections = [];
+            if (state.report) sections.push(String(state.report).trim());
+            if (state.error) sections.push(`## 错误\n${state.error}`);
+            return sections.join("\n\n").trim() || "AIOps 诊断已完成。";
+        }
         const lines = [];
         lines.push(`# AIOps ${final ? "诊断结果" : "诊断进行中"}`);
         lines.push("");

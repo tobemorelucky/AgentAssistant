@@ -38,6 +38,49 @@ def _write_json(path: Path, payload: Any) -> None:
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
+def _truncate_text(value: Any, max_length: int) -> Any:
+    if isinstance(value, str) and len(value) > max_length:
+        return value[:max_length] + "...(truncated)"
+    return value
+
+
+def _sanitize_state_for_persistence(state: dict[str, Any]) -> dict[str, Any]:
+    sanitized = dict(state)
+
+    past_steps = []
+    for step, result in list(state.get("past_steps", []))[-20:]:
+        past_steps.append((_truncate_text(step, 500), _truncate_text(result, 6000)))
+    sanitized["past_steps"] = past_steps
+
+    trace_events = []
+    for event in list(state.get("trace_events", []))[-80:]:
+        if not isinstance(event, dict):
+            continue
+        compact_event = dict(event)
+        compact_event["result_summary"] = _truncate_text(compact_event.get("result_summary", ""), 1000)
+        if isinstance(compact_event.get("metadata"), dict):
+            compact_event["metadata"] = {
+                key: _truncate_text(value, 400)
+                for key, value in list(compact_event["metadata"].items())[:12]
+            }
+        trace_events.append(compact_event)
+    sanitized["trace_events"] = trace_events
+
+    sanitized["response"] = _truncate_text(state.get("response", ""), 50000)
+    sanitized["tools_used"] = list(state.get("tools_used", []))[-40:]
+    if isinstance(sanitized.get("verifier_result"), dict):
+        verifier_result = dict(sanitized["verifier_result"])
+        verifier_result["findings"] = list(verifier_result.get("findings", []))[:10]
+        verifier_result["suggested_next_steps"] = [
+            _truncate_text(item, 500) for item in list(verifier_result.get("suggested_next_steps", []))[:6]
+        ]
+        verifier_result["missing_evidence"] = list(verifier_result.get("missing_evidence", []))[:10]
+        verifier_result["risk_warnings"] = list(verifier_result.get("risk_warnings", []))[:10]
+        sanitized["verifier_result"] = verifier_result
+
+    return sanitized
+
+
 class RuntimeStore:
     """Manage session snapshots and pending approval actions."""
 
@@ -53,7 +96,7 @@ class RuntimeStore:
             "session_id": session_id,
             "status": status,
             "updated_at": _now_iso(),
-            "state": state,
+            "state": _sanitize_state_for_persistence(state),
         }
         _write_json(_runtime_path(session_id), payload)
 

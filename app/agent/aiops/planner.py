@@ -6,7 +6,6 @@ from textwrap import dedent
 from typing import Any
 
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_qwq import ChatQwen
 from loguru import logger
 from pydantic import BaseModel, Field
 
@@ -23,13 +22,15 @@ from app.agent.aiops.patrol import (
 )
 from app.agent.aiops.profile_loader import get_agent_profile_prompt
 from app.agent.aiops.state import PlanExecuteState
+from app.agent.aiops.tool_registry import get_aiops_local_tools
 from app.agent.aiops.tool_policy import check_tool_policy
 from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.agent.aiops.utils import format_tools_description, invoke_tool
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
+from app.core.llm_factory import llm_factory
 from app.models.aiops import ToolPlanStep
-from app.tools import get_current_time, retrieve_knowledge
+from app.tools import retrieve_knowledge
 
 
 class GenericPlan(BaseModel):
@@ -83,10 +84,15 @@ structured_patrol_prompt = ChatPromptTemplate.from_messages(
 
                 Rules:
                 - The target alert is already selected.
+                - Prioritize local evidence first: get_active_alerts, query_cpu_metrics, query_memory_metrics,
+                  query_process_list, search_log, search_historical_tickets, retrieve_knowledge.
                 - Use only available tools.
                 - Do not use blocked tools.
                 - Prefer read_only and low_risk tools.
                 - Do not include dangerous tools in the plan.
+                - web_search is optional and can only be used when local runbook retrieval is not enough,
+                  the task explicitly asks for public docs/error codes, or external public references are required.
+                - web_search can never replace local monitoring, log, or ticket evidence.
                 - If you need logs, search_topic_by_service_name should appear before search_log unless topic_id is already known.
                 - Cover every required evidence type at least once.
                 - Keep args concrete and stable.
@@ -140,6 +146,24 @@ DEFAULT_ALERT_KEYWORDS = (
 )
 
 
+def _build_generic_fallback_plan(input_text: str, available_tools: list[str]) -> list[str]:
+    normalized = (input_text or "").lower()
+    steps: list[str] = []
+    if "retrieve_knowledge" in available_tools:
+        steps.append("调用 retrieve_knowledge 检索相关本地 Runbook、经验文档和处理建议")
+    if any(keyword in normalized for keyword in ("docker", "镜像", "image")):
+        steps.append("结合本地知识确认镜像名称、标签、仓库来源和冲突触发条件")
+        if "web_search" in available_tools:
+            steps.append("如本地 Runbook 不足，再调用 web_search 查询 Docker 官方文档或公开排障资料")
+        steps.append("整理冲突原因、影响范围和安全处理建议，明确哪些操作需要人工确认")
+    else:
+        steps.append("基于任务描述整理需要补充的本地证据和排查方向")
+        if "web_search" in available_tools:
+            steps.append("仅在本地 Runbook 缺失且涉及公开文档时调用 web_search 补充外部参考")
+        steps.append("输出证据边界、风险提示和后续建议")
+    return steps[:6]
+
+
 def should_fetch_active_alerts(mode: str, input_text: str) -> bool:
     normalized = (input_text or "").strip().lower()
     if mode == "default":
@@ -180,7 +204,7 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     session_id = state.get("session_id", "default")
     matched_skills = state.get("matched_skills", [])
 
-    local_tools = [get_current_time, retrieve_knowledge]
+    local_tools = get_aiops_local_tools()
     mcp_client = await get_mcp_client_with_retry()
     mcp_tools = await mcp_client.get_tools()
     all_tools = local_tools + mcp_tools
@@ -266,9 +290,13 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                 except Exception as exc:  # pragma: no cover - best effort
                     logger.warning(f"retrieve_knowledge failed during patrol planning: {exc}")
 
-                if config.dashscope_api_key:
+                if config.get_llm_api_key():
                     try:
-                        llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
+                        llm = llm_factory.create_qwen_chat_model(
+                            preferred_model=config.rag_model,
+                            temperature=0,
+                            streaming=True,
+                        )
                         chain = structured_patrol_prompt | llm.with_structured_output(StructuredToolPlan)
                         llm_plan = await chain.ainvoke(
                             {
@@ -334,53 +362,75 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
         logger.warning(f"retrieve_knowledge failed in planner context: {exc}")
 
     tools_description = format_tools_description(all_tools)
-    llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
-    planner_chain = generic_planner_prompt | llm.with_structured_output(GenericPlan)
-
-    plan_result = await planner_chain.ainvoke(
-        {
-            "messages": [("user", input_text)],
-            "tools_description": tools_description,
-            "experience_context": dedent(
-                f"""
-                ## AGENT Profile
-                {agent_profile}
-
-                ## Matched Skills
-                {skill_context}
-
-                ## Similar Incident Cases
-                {incident_context}
-
-                ## Active Alerts
-                {summarize_alerts(active_alerts)}
-
-                ## Selected Target Alert
-                {summarize_result(target_alert)}
-
-                ## Knowledge Context
-                {experience_docs or "No additional runbook context."}
-                """
-            ).strip(),
-        }
-    )
-
-    plan_steps = plan_result.steps if isinstance(plan_result, GenericPlan) else plan_result.get("steps", [])
-    trace_events.append(
-        create_trace_event(
-            session_id=session_id,
-            node="planner",
-            status="success",
-            title=f"Planner generated {len(plan_steps)} generic steps",
-            result_summary=" | ".join(plan_steps[:3]),
-            metadata={
-                "matched_skills": [skill.get("name") for skill in matched_skills],
-                "similar_incidents": similar_incidents,
-            },
+    plan_source = "generic_llm"
+    try:
+        llm = llm_factory.create_qwen_chat_model(
+            preferred_model=config.rag_model,
+            temperature=0,
+            streaming=True,
         )
-    )
+        planner_chain = generic_planner_prompt | llm.with_structured_output(GenericPlan)
+
+        plan_result = await planner_chain.ainvoke(
+            {
+                "messages": [("user", input_text)],
+                "tools_description": tools_description,
+                "experience_context": dedent(
+                    f"""
+                    ## AGENT Profile
+                    {agent_profile}
+
+                    ## Matched Skills
+                    {skill_context}
+
+                    ## Similar Incident Cases
+                    {incident_context}
+
+                    ## Active Alerts
+                    {summarize_alerts(active_alerts)}
+
+                    ## Selected Target Alert
+                    {summarize_result(target_alert)}
+
+                    ## Knowledge Context
+                    {experience_docs or "No additional runbook context."}
+                    """
+                ).strip(),
+            }
+        )
+        plan_steps = plan_result.steps if isinstance(plan_result, GenericPlan) else plan_result.get("steps", [])
+        if not isinstance(plan_steps, list) or not plan_steps:
+            raise ValueError("generic planner returned empty steps")
+        trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="planner",
+                status="success",
+                title=f"Planner generated {len(plan_steps)} generic steps",
+                result_summary=" | ".join(str(step) for step in plan_steps[:3]),
+                metadata={
+                    "matched_skills": [skill.get("name") for skill in matched_skills],
+                    "similar_incidents": similar_incidents,
+                },
+            )
+        )
+    except Exception as exc:
+        logger.warning(f"Generic planner failed, fallback to template plan: {exc}")
+        plan_steps = _build_generic_fallback_plan(input_text, tool_names)
+        plan_source = "generic_template_fallback"
+        trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="planner",
+                status="warning",
+                title="Generic planner fallback plan generated",
+                result_summary=" | ".join(plan_steps[:3]),
+                metadata={"reason": str(exc)},
+            )
+        )
     return {
         "plan": plan_steps,
+        "plan_source": plan_source,
         "similar_incidents": similar_incidents,
         "active_alerts": active_alerts,
         "target_alert": target_alert,

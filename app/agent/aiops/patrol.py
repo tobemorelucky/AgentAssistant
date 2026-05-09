@@ -216,6 +216,17 @@ def build_fallback_tool_plan(
     ]
 
 
+def build_web_search_step(target_alert: dict[str, Any]) -> ToolPlanStep:
+    service_name = target_alert.get("service_name", "unknown-service")
+    alert_name = target_alert.get("alert_name", "unknown-alert")
+    return ToolPlanStep(
+        tool="web_search",
+        args={"query": f"{service_name} {alert_name} official documentation troubleshooting"},
+        reason="补充外部公开文档、错误码说明或官方排障资料。",
+        evidence_type="external_reference",
+    )
+
+
 def sanitize_tool_plan_steps(
     raw_steps: list[ToolPlanStep | dict[str, Any]],
     *,
@@ -424,7 +435,18 @@ def summarize_structured_tool_result(tool_name: str, result: Any) -> str:
             f"deployment={payload.get('deployment')}"
         )
     if tool_name == "retrieve_knowledge":
+        if isinstance(payload, dict):
+            return str(payload.get("content", ""))[:220]
         return str(payload)[:220]
+    if tool_name == "web_search" and isinstance(payload, dict):
+        content = str(payload.get("content", "")).strip()
+        artifacts = payload.get("artifacts", []) or []
+        first = artifacts[0] if artifacts else {}
+        if isinstance(first, dict):
+            title = (first.get("metadata") or {}).get("title", "")
+            source = (first.get("metadata") or {}).get("source", "")
+            return f"results={len(artifacts)} first={title} {source}".strip()[:220]
+        return content[:220]
     if isinstance(payload, dict):
         preferred = {k: v for k, v in payload.items() if k not in {"type", "data", "test"}}
         return json.dumps(preferred, ensure_ascii=False)[:220]
@@ -530,6 +552,13 @@ def collect_evidence_gaps(
         helper = next((step for step in fallback_steps if step.tool == "search_topic_by_service_name"), None)
         if helper and helper.tool in available_tools and helper.tool not in blocked_tools:
             gaps.insert(0, helper)
+    knowledge_payload = collected.get("retrieve_knowledge")
+    knowledge_missing = not _is_usable_evidence(knowledge_payload)
+    if isinstance(knowledge_payload, dict):
+        knowledge_missing = not str(knowledge_payload.get("content", "")).strip()
+    if knowledge_missing and "web_search" in available_tools and "web_search" not in blocked_tools:
+        if not _is_usable_evidence(collected.get("web_search")):
+            gaps.append(build_web_search_step(target_alert))
     return _stable_order_steps(gaps)
 
 
@@ -541,6 +570,25 @@ def build_alert_report(input_text: str, target_alert: dict[str, Any], past_steps
     instance = target_alert.get("instance", "unknown-instance")
     duration = target_alert.get("duration", "unknown")
 
+    web_search_payload = evidence.get("web_search") if isinstance(evidence.get("web_search"), dict) else {}
+    web_search_docs = web_search_payload.get("artifacts", []) or []
+    web_search_section = ""
+    if web_search_docs:
+        lines = []
+        for item in web_search_docs[:3]:
+            if not isinstance(item, dict):
+                continue
+            metadata = item.get("metadata") or {}
+            lines.append(
+                "- 标题: {title}\n  链接: {source}\n  摘要: {summary}\n  用途: 用于补充 Runbook / 官方说明 / 错误码解释，不作为本地故障直接证据".format(
+                    title=metadata.get("title") or "未提供标题",
+                    source=metadata.get("source") or "未提供链接",
+                    summary=str(item.get("page_content") or "")[:180] or "未提供摘要",
+                )
+            )
+        if lines:
+            web_search_section = "\n\n## 联网搜索补充资料\n" + "\n".join(lines)
+
     if alert_name in {"HighDiskUsage", "DiskFull"}:
         disk_usage = evidence.get("get_disk_usage") if isinstance(evidence.get("get_disk_usage"), dict) else {}
         directories = (evidence.get("list_large_directories") or {}).get("directories", [])
@@ -548,7 +596,12 @@ def build_alert_report(input_text: str, target_alert: dict[str, Any], past_steps
         deleted = (evidence.get("query_deleted_open_files") or {}).get("files", [])
         docker = evidence.get("query_docker_disk_usage") if isinstance(evidence.get("query_docker_disk_usage"), dict) else {}
         cleanup = evidence.get("get_disk_cleanup_candidates") if isinstance(evidence.get("get_disk_cleanup_candidates"), dict) else {}
-        knowledge = evidence.get("retrieve_knowledge", "")
+        knowledge_payload = evidence.get("retrieve_knowledge", "")
+        knowledge = (
+            knowledge_payload.get("content", "")
+            if isinstance(knowledge_payload, dict)
+            else knowledge_payload
+        )
 
         top_dirs = [
             f"- `{item.get('path')}`: {item.get('size_gb')}GB"
@@ -631,14 +684,15 @@ def build_alert_report(input_text: str, target_alert: dict[str, Any], past_steps
             - 为日志、缓存、Docker 构建缓存设置容量水位和自动轮转策略。
             - 为磁盘热点目录建立定期巡检与告警阈值。
             """
-        ).strip()
+        ).strip() + web_search_section
 
     cpu_metrics = evidence.get("query_cpu_metrics") if isinstance(evidence.get("query_cpu_metrics"), dict) else {}
     process_list = evidence.get("query_process_list") if isinstance(evidence.get("query_process_list"), dict) else {}
     service_info = evidence.get("get_service_info") if isinstance(evidence.get("get_service_info"), dict) else {}
     ticket_info = evidence.get("search_historical_tickets") if isinstance(evidence.get("search_historical_tickets"), dict) else {}
     log_info = evidence.get("search_log") if isinstance(evidence.get("search_log"), dict) else {}
-    knowledge = evidence.get("retrieve_knowledge", "")
+    knowledge_payload = evidence.get("retrieve_knowledge", "")
+    knowledge = knowledge_payload.get("content", "") if isinstance(knowledge_payload, dict) else knowledge_payload
 
     cpu_stats = cpu_metrics.get("statistics", {}) or {}
     processes = process_list.get("processes", []) or []
@@ -706,7 +760,7 @@ def build_alert_report(input_text: str, target_alert: dict[str, Any], past_steps
         - 对照历史工单和 runbook 校验是否需要限流、扩容或修复下游依赖。
         - 在补齐更多日志证据前，不要直接执行重启或缩容。
         """
-    ).strip()
+    ).strip() + web_search_section
 
 
 def build_patrol_verifier_findings(
@@ -729,6 +783,7 @@ def build_patrol_verifier_findings(
     required = required_evidence_summary(target_alert, matched_skills)
     collected = parse_tool_results_from_history(past_steps)
     lowered = response.lower()
+    web_search_used = _is_usable_evidence(collected.get("web_search"))
 
     if alert_name and alert_name not in response:
         findings.append("报告中缺少 target_alert。")
@@ -759,5 +814,16 @@ def build_patrol_verifier_findings(
     if "unknown" in lowered:
         findings.append("报告包含 unknown 占位符，说明存在未处理的数据缺口。")
         suggested.append("将 unknown 替换为“该字段未返回”，并只基于真实证据得出结论。")
+
+    if web_search_used:
+        if "联网搜索补充资料" not in response:
+            findings.append("使用了联网搜索，但报告中缺少“联网搜索补充资料”段落。")
+            suggested.append("在报告中单独列出联网搜索资料的标题、链接、摘要和用途。")
+        if "链接:" not in response or "标题:" not in response:
+            findings.append("联网资料缺少标题或链接。")
+            suggested.append("补充联网资料的标题和链接。")
+        if any(not any(_is_usable_evidence(collected.get(tool_name)) for tool_name in tools) for tools in required.values()):
+            findings.append("报告不能只依赖联网搜索推断本地系统根因。")
+            suggested.append("先补齐本地监控、日志、工单或本地 runbook 证据，再使用联网资料做外部参考。")
 
     return findings, suggested, missing, warnings

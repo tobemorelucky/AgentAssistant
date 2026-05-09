@@ -12,6 +12,7 @@ class PlanExecuteState(TypedDict, total=False):
     session_id: str
     input: str
     mode: str
+    plan_source: str
     entry_node: str
     status: str
     plan: List[Any]

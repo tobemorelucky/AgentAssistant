@@ -3,6 +3,8 @@ tools:
     level: read_only
   retrieve_knowledge:
     level: read_only
+  web_search:
+    level: read_only
   get_current_timestamp:
     level: read_only
   get_region_code_by_name:

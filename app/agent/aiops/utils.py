@@ -5,6 +5,8 @@ from __future__ import annotations
 import json
 from typing import Any, List
 
+from langchain_core.documents import Document
+
 
 def format_tools_description(tools: List) -> str:
     """Render tool descriptions for prompts."""
@@ -32,6 +34,13 @@ def unwrap_tool_result(value: Any) -> Any:
     """Best-effort normalization for MCP/LangChain content blocks."""
     if value is None:
         return None
+
+    if isinstance(value, tuple) and len(value) == 2:
+        content, artifact = value
+        return {
+            "content": unwrap_tool_result(content),
+            "artifacts": _normalize_artifact(artifact),
+        }
 
     if isinstance(value, str):
         text = value.strip()
@@ -64,7 +73,26 @@ def unwrap_tool_result(value: Any) -> Any:
             if key not in {"id", "type"}
         }
 
+    if isinstance(value, Document):
+        return {
+            "page_content": value.page_content,
+            "metadata": dict(value.metadata or {}),
+        }
+
     return value
+
+
+def _normalize_artifact(value: Any) -> Any:
+    if isinstance(value, list):
+        return [_normalize_artifact(item) for item in value]
+    if isinstance(value, tuple):
+        return [_normalize_artifact(item) for item in value]
+    if isinstance(value, Document):
+        return {
+            "page_content": value.page_content,
+            "metadata": dict(value.metadata or {}),
+        }
+    return unwrap_tool_result(value)
 
 
 def _extract_embedded_json(text: str) -> Any:

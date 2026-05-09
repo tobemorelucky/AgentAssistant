@@ -10,6 +10,7 @@ from app.agent.aiops.patrol import build_patrol_verifier_findings
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
 from app.config import config
+from app.core.llm_factory import llm_factory
 
 try:
     from langchain_core.prompts import ChatPromptTemplate
@@ -95,6 +96,45 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     )
 
 
+def _generic_template_verify(state: PlanExecuteState) -> VerifierOutput:
+    response = state.get("response", "")
+    past_steps = state.get("past_steps", [])
+    findings: list[str] = []
+    suggested: list[str] = []
+    missing: list[str] = []
+    warnings: list[str] = []
+
+    if len(past_steps) < 2:
+        findings.append("通用诊断链路收集到的证据步骤过少。")
+        suggested.append("至少补充一次本地知识库检索，并在需要时补充公开文档参考。")
+        missing.append("execution_history")
+
+    if not response.strip():
+        findings.append("最终报告为空。")
+        suggested.append("基于当前执行历史生成最终报告。")
+        missing.append("final_report")
+
+    lowered = response.lower()
+    if "未执行任何" not in response and "没有执行任何" not in response and "no dangerous operation" not in lowered:
+        findings.append("报告没有明确说明未执行任何危险操作。")
+        suggested.append("在风险提示中明确声明未执行任何删除、覆盖、pull 或 prune 操作。")
+        warnings.append("missing_safety_disclaimer")
+
+    used_web_search = any("web_search" in step for step, _ in past_steps)
+    if used_web_search and "联网搜索补充资料" not in response:
+        findings.append("报告使用了联网资料，但没有单独区分外部参考。")
+        suggested.append("增加“联网搜索补充资料”章节，并附上标题与链接。")
+        missing.append("external_reference_section")
+
+    return VerifierOutput(
+        passed=not findings,
+        findings=findings,
+        suggested_next_steps=suggested,
+        missing_evidence=missing,
+        risk_warnings=warnings,
+    )
+
+
 async def verifier(state: PlanExecuteState) -> dict[str, object]:
     """LangGraph node: verify whether the report is evidence-backed."""
     logger.info("=== Verifier ===")
@@ -105,9 +145,11 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
     result: VerifierOutput
     if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
         result = _disk_verify(state)
+    elif state.get("plan_source") == "generic_template_fallback":
+        result = _generic_template_verify(state)
     elif state.get("target_alert"):
         result = _heuristic_verify(state)
-    elif ChatQwen and ChatPromptTemplate and config.dashscope_api_key and response.strip():
+    elif ChatQwen and ChatPromptTemplate and config.get_llm_api_key() and response.strip():
         prompt = ChatPromptTemplate.from_messages(
             [
                 (
@@ -115,13 +157,19 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
                     (
                         "You are an AIOps verifier. Check whether the report is backed by tool evidence, "
                         "avoids unsupported guesses, covers impact scope, and adds risk warnings for high-risk suggestions. "
+                        "web_search evidence is external reference only and cannot replace local metrics, logs, or tickets. "
+                        "If web_search is cited, the report must clearly separate it from local evidence and include title and link. "
                         "If it fails, return concise suggested_next_steps."
                     ),
                 ),
                 ("user", "Task:\n{task}\n\nExecution history:\n{history}\n\nReport:\n{report}"),
             ]
         )
-        llm = ChatQwen(model=config.rag_model, api_key=config.dashscope_api_key, temperature=0)
+        llm = llm_factory.create_qwen_chat_model(
+            preferred_model=config.rag_model,
+            temperature=0,
+            streaming=True,
+        )
         chain = prompt | llm.with_structured_output(VerifierOutput)
         history_text = "\n\n".join(f"Step: {step}\nResult: {result_text}" for step, result_text in past_steps)
         try:
@@ -148,6 +196,11 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
             result_summary="; ".join(verifier_result["findings"]),
             metadata=verifier_result,
         )
+        if state.get("plan_source") == "generic_template_fallback":
+            return {
+                "verifier_result": verifier_result,
+                "trace_events": [trace_event],
+            }
         return {
             "response": "",
             "plan": list(dict.fromkeys(verifier_result["suggested_next_steps"])),

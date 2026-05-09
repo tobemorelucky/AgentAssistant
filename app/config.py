@@ -28,6 +28,9 @@ class Settings(BaseSettings):
     dashscope_api_key: str = ""  # 默认空字符串，实际使用需从环境变量加载
     dashscope_api_base: str = "https://dashscope.aliyuncs.com/compatible-mode/v1"
     dashscope_model: str = "qwen-max"
+    llm_api_key: str = ""
+    llm_api_base: str = ""
+    llm_model: str = ""
 
     # 向量模型（Embedding）配置
     embedding_api_key: str = ""
@@ -56,6 +59,11 @@ class Settings(BaseSettings):
 
     # 文档分块配置
     aiops_max_steps: int = 8
+    web_search_enabled: bool = False
+    tavily_api_key: str = ""
+    web_search_max_results: int = 5
+    web_search_depth: str = "basic"
+    web_search_timeout: float = 10.0
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 
@@ -122,6 +130,30 @@ class Settings(BaseSettings):
     def get_embedding_dimensions(self) -> int:
         """获取 embedding 维度配置。"""
         return self.embedding_dimensions or self.dashscope_embedding_dimensions or 1024
+
+    def get_llm_api_key(self) -> str:
+        """Return the API key used by chat and AIOps models."""
+        candidate = self.llm_api_key or self.dashscope_api_key
+        return candidate.strip()
+
+    def get_llm_api_base(self) -> str:
+        """Return the API base used by chat and AIOps models."""
+        candidate = self.llm_api_base or self.dashscope_api_base
+        return candidate.strip() or "https://dashscope.aliyuncs.com/compatible-mode/v1"
+
+    def get_llm_model(self, preferred_model: str = "") -> str:
+        """Return the concrete model used by chat and AIOps models."""
+        for candidate in (
+            self.llm_model,
+            self.dashscope_model,
+            preferred_model,
+            self.rag_model,
+            "qwen-max",
+        ):
+            normalized = (candidate or "").strip()
+            if normalized:
+                return normalized
+        return "qwen-max"
 
     def get_validated_text_embedding_model(self) -> str:
         """获取并校验文本 embedding 模型。"""

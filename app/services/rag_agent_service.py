@@ -17,9 +17,8 @@ from langgraph.checkpoint.memory import MemorySaver
 from langgraph.graph.message import REMOVE_ALL_MESSAGES, add_messages
 from loguru import logger
 from typing_extensions import TypedDict
-from langchain_qwq import ChatQwen
-
 from app.config import config
+from app.core.llm_factory import llm_factory
 from app.tools import get_current_time, retrieve_knowledge
 from app.agent.mcp_client import get_mcp_client_with_retry
 
@@ -82,14 +81,13 @@ class RagAgentService:
         Args:
             streaming: 是否启用流式输出，默认为 True
         """
-        self.model_name = config.rag_model
+        self.model_name = config.get_llm_model(config.rag_model)
         self.streaming = streaming
         self.system_prompt = self._build_system_prompt()
 
 
-        self.model = ChatQwen(
-            model=self.model_name,
-            api_key=config.dashscope_api_key,
+        self.model = llm_factory.create_qwen_chat_model(
+            preferred_model=self.model_name,
             temperature=0.7,
             streaming=streaming,
         )

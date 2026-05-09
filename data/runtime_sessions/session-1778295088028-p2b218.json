@@ -1,0 +1,43 @@
+{
+  "session_id": "session-1778295088028-p2b218",
+  "status": "running",
+  "updated_at": "2026-05-09T02:52:27.235367+00:00",
+  "state": {
+    "session_id": "session-1778295088028-p2b218",
+    "input": "docker镜像冲突怎么办",
+    "mode": "custom",
+    "entry_node": "skill_router",
+    "status": "running",
+    "plan": [],
+    "past_steps": [],
+    "response": "",
+    "matched_skills": [],
+    "similar_incidents": [],
+    "trace_events": [
+      {
+        "trace_id": "ee7c54e5-d378-4a94-ae7c-49896f6882b9",
+        "session_id": "session-1778295088028-p2b218",
+        "node": "skill_router",
+        "status": "success",
+        "title": "Matched 0 skills",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "No skills matched",
+        "started_at": "2026-05-09T02:52:27.234698+00:00",
+        "ended_at": "2026-05-09T02:52:27.234698+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "matched_skills": []
+        }
+      }
+    ],
+    "tools_used": [],
+    "verifier_result": {},
+    "pending_action": null,
+    "active_alerts": [],
+    "target_alert": null,
+    "incident_record": {},
+    "feedback": {},
+    "generated_skill_draft": null
+  }
+}

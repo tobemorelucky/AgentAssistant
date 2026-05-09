@@ -220,6 +220,14 @@ class AIOpsService:
             return text[:240] if text else ""
 
         if isinstance(parsed, dict):
+            if "content" in parsed and "artifacts" in parsed:
+                content = str(parsed.get("content", "")).strip()
+                artifacts = parsed.get("artifacts", []) or []
+                if artifacts and isinstance(artifacts[0], dict):
+                    metadata = artifacts[0].get("metadata") or {}
+                    if metadata.get("provider") == "tavily":
+                        return summarize_structured_tool_result("web_search", parsed)[:240]
+                return content[:240]
             if {"usage_percent", "used_gb", "total_gb", "available_gb"} & set(parsed.keys()):
                 return summarize_disk_tool_result("get_disk_usage", parsed)[:240]
             if "directories" in parsed and isinstance(parsed["directories"], list):
@@ -289,6 +297,7 @@ class AIOpsService:
             "session_id": session_id,
             "input": user_input,
             "mode": mode,
+            "plan_source": "",
             "entry_node": NODE_SKILL_ROUTER,
             "status": "running",
             "plan": [],

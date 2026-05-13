@@ -62,3 +62,4 @@
 - 修复 AIOps 完成后未出现“是否帮助到您”反馈的问题：前端现在在 `complete` 事件后稳定渲染反馈区，并在刷新/重绘后从 `aiops-final` 历史消息中恢复 `feedbackStatus=pending` 的提示。
 - 优化 AIOps 报告样式：为 `.message.assistant.aiops-message` 下的 `h1/h2/h3`、段落、列表和代码块增加专属间距与换行约束，尽量保持页面纵向阅读，减少标题错位和横向撑开。
 - 重写 `README.md` 为干净的中文版本，补齐普通 RAG 对话、AIOps 默认巡检/自定义诊断、Tool Policy、Agent Trace、审批、Verifier、Incident Memory、Skill Draft、AIOps 专用 web_search、mock 数据链路、关键 `.env` 配置与主要接口说明，并明确 `aiops-docs` 是本地 Runbook 文档而非实时日志。
+- 2026-05-13：重写 `README.md`，清理原有乱码，改为可直接对外阅读的中文说明文档，覆盖普通 RAG、AIOps 模式、Skill Router、Tool Policy、Agent Trace、审批、Verifier、Incident Memory、Skill Draft、AIOps 专用 web_search、mock 数据链路、关键 `.env` 配置与主要接口说明。

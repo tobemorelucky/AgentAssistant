@@ -1,92 +1,117 @@
 # SuperBizAgent
 
-一个基于 `FastAPI + LangGraph + MCP + Milvus` 的 Agent Assistant 项目，包含两条主要能力：
+一个面向企业知识问答与 AIOps 场景的 Agent Assistant 项目，基于 `FastAPI + LangGraph + MCP + Milvus` 构建。
 
-- 普通 RAG 对话：面向知识问答与文档检索
-- AIOps Agent：面向巡检、告警诊断、证据采集、风险提示与经验沉淀
+当前项目包含两条主能力：
 
-当前项目重点已经升级为一个更偏 Agent 工程化的 AIOps Agent 平台，强调：
+- 普通 RAG 对话：用于本地知识库问答与文档检索
+- AIOps Agent：用于巡检、告警诊断、证据采集、风险提示和经验沉淀
+
+## 项目定位
+
+当前版本已经不只是一个简单的 RAG Demo，而是一个更偏 Agent 工程化的 AIOps Agent 平台，重点能力包括：
 
 - Agent Workflow
+- Skill Router
 - Tool Policy 治理
 - Human-in-the-loop 审批
 - Agent Trace 执行轨迹
 - Verifier 证据校验
-- Incident Memory 与 Skill Draft
+- Incident Memory
+- Skill Draft
+- AIOps 专用联网搜索
 
 ## 主要能力
 
-### 1. 普通 RAG 对话
+### 普通 RAG 对话
 
-- 支持普通问答和流式问答
-- 支持上传本地文档后写入向量库
-- 检索结果来自本地知识库，不依赖外部联网搜索
+- 支持普通问答与流式问答
+- 支持上传文档并写入向量库
+- 检索结果来自本地知识库
+- 不接入 `web_search`
 
 说明：
 
-- `aiops-docs/` 里的文档会作为本地 Runbook / 知识库被检索
-- 它不是实时日志，也不是在线监控数据
+- `aiops-docs/` 中的文档会作为本地 Runbook / 知识库内容被检索
+- 它不是实时日志，也不是实时监控数据
 
-### 2. AIOps Agent
+### AIOps Agent
 
-`POST /api/aiops` 保持流式 SSE 接口兼容，并在原有 `status / plan / step_complete / report / complete / error` 之外，增强支持：
+`POST /api/aiops` 保持流式 SSE 接口兼容，支持以下事件：
 
+- `status`
 - `trace`
-- `approval_required`
+- `plan`
+- `step_complete`
+- `report`
 - `verifier_result`
+- `approval_required`
+- `complete`
+- `error`
 
-AIOps 当前支持两种模式：
+AIOps 支持两种模式：
 
 - 默认巡检模式
 - 自定义诊断模式
 
 #### 默认巡检模式
 
-当前端点击 `AI Ops` 且输入框为空时，系统会使用默认任务：
+当前端点击 `AI Ops` 且输入框为空时，会自动使用默认任务：
 
 > 请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。
 
-默认巡检的第一步固定是：
+默认巡检的确定性第一步是：
 
 - `get_active_alerts` / `list_active_alerts`
 
-如果没有活跃告警：
+行为说明：
 
-- 会直接生成“当前未检测到活跃告警”的巡检报告
-
-如果发现告警：
-
-- 会围绕最高严重级别的 `target_alert` 做后续诊断
+- 如果没有活跃告警，会直接生成“当前未检测到活跃告警”的巡检报告
+- 如果存在活跃告警，会围绕最高严重级别的 `target_alert` 展开后续诊断
 
 #### 自定义诊断模式
 
 当前端输入框有内容时，点击 `AI Ops` 会把输入内容作为 `task` 传给后端。
 
-例如：
+示例：
 
 ```text
 data-sync-service 出现 HighCPUUsage 告警，请排查
 ```
 
-或者：
+```text
+服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议
+```
 
 ```text
 docker镜像冲突怎么办
 ```
 
-### 3. Skill Router
+## Agent 工程化能力
 
-项目支持 `skills/<skill>/SKILL.md` 形式的本地 Runbook Skill。
+### 1. AGENT.md
 
-当前 Skill Router 会根据用户任务匹配技能，并只把命中的 Skill 注入 Planner。  
-当前已经接入的典型链路包括：
+项目根目录下的 `AGENT.md` 用作 AIOps Agent 的项目级 Profile，约束：
 
-- 告警巡检
+- 系统定位
+- 诊断原则
+- 工具使用规范
+- 报告格式
+- 安全边界
+
+### 2. Skill Router
+
+项目支持 `skills/<skill>/SKILL.md` 形式的本地 Skill。
+
+当前 Skill Router 会根据用户任务、关键词、告警或意图匹配技能，并只把命中的 Skill 注入 Planner。  
+当前已接入的典型链路包括：
+
+- 默认告警巡检
 - `disk_cleanup` 磁盘清理诊断
 
-### 4. Tool Policy
+### 3. Tool Policy
 
-项目根目录下的 `tool_policy.yaml` 会对工具分级：
+项目根目录下的 `tool_policy.yaml` 会对工具进行分级：
 
 - `read_only`
 - `low_risk`
@@ -99,7 +124,7 @@ docker镜像冲突怎么办
 - `dangerous`：进入人工审批
 - `blocked`：直接拒绝
 
-### 5. Agent Trace
+### 4. Agent Trace
 
 AIOps 运行过程中会记录完整执行轨迹，包括：
 
@@ -116,12 +141,12 @@ AIOps 运行过程中会记录完整执行轨迹，包括：
 
 - `data/agent_traces/<session_id>.jsonl`
 
-前端支持：
+前端行为：
 
 - 默认折叠 Agent Trace
-- 点击“查看 Agent Trace”后展开时间线
+- 点击“查看 Agent Trace”后展开
 
-### 6. Verifier
+### 5. Verifier
 
 最终报告生成前，Verifier 会检查：
 
@@ -129,21 +154,21 @@ AIOps 运行过程中会记录完整执行轨迹，包括：
 - 是否存在无根据推断
 - 是否遗漏影响范围
 - 是否缺少风险提示
-- 是否声明未执行危险操作
+- 是否明确说明未执行危险操作
 
-### 7. Human-in-the-loop 审批
+### 6. 审批
 
-对 `dangerous` 工具调用，后端会挂起执行，等待前端审批。
+对 `dangerous` 工具调用，后端会挂起执行并等待前端审批。
 
-相关接口：
+接口：
 
 - `POST /api/agent/approve`
 - `POST /api/agent/reject`
 - `GET /api/agent/pending-actions/{session_id}`
 
-### 8. Incident Memory 与 Skill Draft
+### 7. Incident Memory 与 Skill Draft
 
-AIOps 完成后，系统支持沉淀：
+AIOps 完成后支持沉淀：
 
 - 用户任务
 - 命中的 Skill
@@ -153,41 +178,42 @@ AIOps 完成后，系统支持沉淀：
 - 建议
 - Verifier 结果
 
-注意：
+当前行为说明：
 
-- 现在不会在报告生成后立刻自动写入记忆
-- 只有用户在前端点击“是否帮助到您”里的“是”后，才会触发后续记忆与 Skill Draft 生成
+- 报告生成后不会立刻自动写入记忆
+- 前端会显示“请问是否帮助到您？”
+- 只有用户点击“是”后，才会触发后续记忆沉淀与 Skill Draft 生成
 
-## 联网搜索
+## AIOps 专用联网搜索
 
 项目已支持 AIOps 专用 `web_search` 工具，基于 Tavily Search API。
 
 用途：
 
-- 本地 Runbook 不足时补充公开文档
+- 本地 Runbook 不足时补充公开资料
 - 查询官方错误码说明
-- 查询框架/云厂商公开排障资料
+- 查询框架或云厂商公开排障文档
 
 限制：
 
-- 只接入 AIOps Agent
+- 只接入 AIOps
 - 不接入普通 RAG Chat
 - 联网资料只能作为补充证据，不能替代本地监控、日志、工单和知识库证据
 
-如果报告引用了联网资料，最终报告中应单独区分：
+如果报告使用了联网资料，应该在最终报告中明确区分：
 
 - 本地监控/日志/工单证据
 - 本地知识库 Runbook
 - 联网搜索补充资料
 
-## Mock 数据说明
+## Mock 数据链路
 
-当前 AIOps 包含一套纯模拟数据链路，便于本地联调：
+项目内已经接入多条本地 mock 数据链路，便于联调：
 
 - 活跃告警 mock：`mcp_servers/monitor_server.py`
 - 磁盘诊断 mock：`mock_data/disk.json`
 
-例如磁盘诊断任务：
+例如输入：
 
 ```text
 服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议
@@ -242,6 +268,7 @@ uv pip install -e .
 
 ```env
 APP_NAME=SuperBizAgent
+DEBUG=True
 HOST=0.0.0.0
 PORT=9900
 
@@ -265,13 +292,14 @@ MULTIMODAL_EMBEDDING_MODEL=tongyi-embedding-vision-flash-2026-03-06
 # Milvus
 MILVUS_HOST=localhost
 MILVUS_PORT=19530
+MILVUS_TIMEOUT=10000
 
 # RAG / AIOps
 RAG_TOP_K=3
 RAG_MODEL=qwen3.5-plus-2026-02-15
 AIOPS_MAX_STEPS=8
 
-# Web Search（仅 AIOps）
+# AIOps Web Search
 WEB_SEARCH_ENABLED=false
 TAVILY_API_KEY=
 WEB_SEARCH_MAX_RESULTS=5
@@ -291,11 +319,11 @@ MCP_MONITOR_URL=http://localhost:8004/mcp
 
 说明：
 
-- 普通聊天和 AIOps 主模型现在统一优先读取 `LLM_*`
+- 普通聊天和 AIOps 主模型优先读取 `LLM_*`
 - 向量模型优先读取 `EMBEDDING_*`
 - 不建议把多模态模型填到 `TEXT_EMBEDDING_MODEL`
 
-### 3. 启动 Milvus / MCP / 服务
+### 3. 启动依赖
 
 示例：
 
@@ -322,7 +350,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
 
 - `POST /api/aiops`
 
-请求体：
+请求体示例：
 
 ```json
 {
@@ -341,7 +369,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
 
 - `POST /api/upload`
 
-返回里会包含：
+响应里会包含：
 
 - `indexed`
 - `index_error`
@@ -371,17 +399,17 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
 - 普通对话与 AIOps 分开处理
 - AIOps 报告完成后默认显示最终 Markdown 报告
 - Agent Trace 默认折叠
-- 报告底部会显示“请问是否帮助到您？”
+- 报告底部显示“请问是否帮助到您？”
 
 ## 注意事项
 
 1. `web_search` 只给 AIOps 使用，不接入普通 RAG Chat。
 2. `aiops-docs` 是本地 Runbook 文档，不是实时日志。
 3. 危险操作只能作为建议展示，不能声称已经执行。
-4. 若复用旧 `session_id`，可能会带上旧的 runtime snapshot；联调时建议使用新的 `session_id`。
+4. 调试 AIOps 时建议使用新的 `session_id`，避免复用旧 runtime snapshot。
 
 ## 变更记录
 
-所有工程化改动记录见：
+详细工程化改动见：
 
 - `Changelog/2026-05-05-aiops-agent-platform.md`

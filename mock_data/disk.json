@@ -5,24 +5,29 @@
     "usage_percent": 92.4,
     "used_gb": 184.8,
     "total_gb": 200,
-    "available_gb": 15.2
+    "available_gb": 15.2,
+    "source": "mock"
   },
   "large_directories": [
     {
       "path": "/var/log",
-      "size_gb": 48.2
+      "size_gb": 48.2,
+      "source": "mock"
     },
     {
       "path": "/var/lib/docker",
-      "size_gb": 37.5
+      "size_gb": 37.5,
+      "source": "mock"
     },
     {
       "path": "/tmp",
-      "size_gb": 12.1
+      "size_gb": 12.1,
+      "source": "mock"
     },
     {
       "path": "/app/cache",
-      "size_gb": 8.6
+      "size_gb": 8.6,
+      "source": "mock"
     }
   ],
   "large_files": [
@@ -53,7 +58,8 @@
     "containers_gb": 1.6,
     "volumes_gb": 6.1,
     "build_cache_gb": 9.4,
-    "total_gb": 21.3
+    "total_gb": 21.3,
+    "source": "mock"
   },
   "cleanup_candidates": {
     "safe": [

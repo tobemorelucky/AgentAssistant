@@ -213,6 +213,23 @@ AIOps 完成后支持沉淀：
 - 活跃告警 mock：`mcp_servers/monitor_server.py`
 - 磁盘诊断 mock：`mock_data/disk.json`
 
+当前磁盘监控工具也支持切换到远程 Host Agent 真实数据源：
+
+- `AIOPS_MONITOR_PROVIDER=mock`
+- `AIOPS_MONITOR_PROVIDER=remote_host`
+
+当切换为 `remote_host` 时，当前第一轮已经支持以下 3 个工具走远程 Ubuntu Host Agent：
+
+- `get_disk_usage`
+- `list_large_directories`
+- `query_docker_disk_usage`
+
+对应远程接口：
+
+- `GET /api/v1/disk/usage`
+- `GET /api/v1/disk/large-directories`
+- `GET /api/v1/docker/disk-usage`
+
 例如输入：
 
 ```text
@@ -315,6 +332,11 @@ MCP_CLS_TRANSPORT=streamable-http
 MCP_CLS_URL=http://localhost:8003/mcp
 MCP_MONITOR_TRANSPORT=streamable-http
 MCP_MONITOR_URL=http://localhost:8004/mcp
+
+# AIOps Monitor Provider
+AIOPS_MONITOR_PROVIDER=mock
+AIOPS_REMOTE_HOST_BASE_URL=
+AIOPS_REMOTE_HOST_TOKEN=
 ```
 
 说明：
@@ -322,6 +344,8 @@ MCP_MONITOR_URL=http://localhost:8004/mcp
 - 普通聊天和 AIOps 主模型优先读取 `LLM_*`
 - 向量模型优先读取 `EMBEDDING_*`
 - 不建议把多模态模型填到 `TEXT_EMBEDDING_MODEL`
+- `AIOPS_MONITOR_PROVIDER=remote_host` 时，Monitor MCP 会改为请求远程 Host Agent
+- `AIOPS_REMOTE_HOST_TOKEN` 当前按 `Authorization: Bearer <token>` 方式发送；如果远程 Agent 不需要认证，可留空
 
 ### 3. 启动依赖
 
@@ -332,6 +356,14 @@ docker compose -f vector-database.yml up -d
 python mcp_servers/cls_server.py
 python mcp_servers/monitor_server.py
 python -m uvicorn app.main:app --host 0.0.0.0 --port 9900
+```
+
+如果你要读取 Ubuntu 虚拟机中的真实磁盘监控数据，请额外配置：
+
+```env
+AIOPS_MONITOR_PROVIDER=remote_host
+AIOPS_REMOTE_HOST_BASE_URL=http://192.168.6.129:9001
+AIOPS_REMOTE_HOST_TOKEN=
 ```
 
 ### 4. 打开页面

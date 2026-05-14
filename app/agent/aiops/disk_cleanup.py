@@ -162,6 +162,19 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _is_tool_error(payload: Any) -> bool:
+    return isinstance(payload, dict) and payload.get("ok") is False
+
+
+def _error_metadata(payload: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "ok": False,
+        "source": payload.get("source") or "unknown",
+        "message": payload.get("message") or "工具返回错误",
+        "error_code": payload.get("error_code") or "tool_error",
+    }
+
+
 def _disk_status(usage_percent: float | None) -> str:
     if usage_percent is None:
         return "unknown"
@@ -212,8 +225,20 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
 
     if tool_name == "get_disk_usage":
         data = payload if isinstance(payload, dict) else {}
+        if _is_tool_error(data):
+            return {
+                **_error_metadata(data),
+                "host": data.get("host"),
+                "mount": data.get("mount") or "/",
+                "usage_percent": None,
+                "used_gb": None,
+                "total_gb": None,
+                "available_gb": None,
+                "status": "unknown",
+            }
         usage_percent = _to_float(data.get("usage_percent"))
         return {
+            "ok": True,
             "host": data.get("host") or "demo-server-01",
             "mount": data.get("mount") or "/",
             "usage_percent": usage_percent,
@@ -221,10 +246,18 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
             "total_gb": _to_float(data.get("total_gb")),
             "available_gb": _to_float(data.get("available_gb")),
             "status": data.get("status") or _disk_status(usage_percent),
+            "source": data.get("source") or "mock",
         }
 
     if tool_name == "list_large_directories":
         data = payload if isinstance(payload, dict) else {}
+        if _is_tool_error(data):
+            return {
+                **_error_metadata(data),
+                "path": data.get("path") or "/",
+                "limit": int(data.get("limit") or 10),
+                "directories": [],
+            }
         directories = data.get("directories") if isinstance(data.get("directories"), list) else []
         normalized = []
         for item in directories:
@@ -236,12 +269,15 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
                     "path": path,
                     "size_gb": _to_float(item.get("size_gb")),
                     "reason": item.get("reason") or _directory_reason(path),
+                    "source": item.get("source") or data.get("source") or "mock",
                 }
             )
         return {
+            "ok": True,
             "path": data.get("path") or "/",
             "limit": int(data.get("limit") or len(normalized) or 10),
             "directories": normalized,
+            "source": data.get("source") or "mock",
         }
 
     if tool_name == "list_large_files":
@@ -293,6 +329,15 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
 
     if tool_name == "query_docker_disk_usage":
         data = payload if isinstance(payload, dict) else {}
+        if _is_tool_error(data):
+            return {
+                **_error_metadata(data),
+                "images_gb": None,
+                "containers_gb": None,
+                "volumes_gb": None,
+                "build_cache_gb": None,
+                "total_gb": None,
+            }
         images_gb = _to_float(data.get("images_gb"))
         containers_gb = _to_float(data.get("containers_gb"))
         volumes_gb = _to_float(data.get("volumes_gb"))
@@ -302,11 +347,13 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
             parts = [part for part in [images_gb, containers_gb, volumes_gb, build_cache_gb] if part is not None]
             total_gb = round(sum(parts), 1) if parts else None
         return {
+            "ok": True,
             "images_gb": images_gb,
             "containers_gb": containers_gb,
             "volumes_gb": volumes_gb,
             "build_cache_gb": build_cache_gb,
             "total_gb": total_gb,
+            "source": data.get("source") or "mock",
         }
 
     if tool_name == "get_disk_cleanup_candidates":
@@ -364,9 +411,16 @@ def summarize_disk_tool_result(tool_name: str, raw_result: Any) -> str:
     """Create a human-readable summary for disk tool results."""
     result = normalize_disk_tool_result(tool_name, raw_result)
 
+    if isinstance(result, dict) and result.get("ok") is False:
+        return (
+            f"source={result.get('source')}, "
+            f"error_code={result.get('error_code')}, "
+            f"message={result.get('message')}"
+        )
+
     if tool_name == "get_disk_usage":
         return (
-            f"host={result.get('host')}, mount={result.get('mount')}, "
+            f"source={result.get('source')}, host={result.get('host')}, mount={result.get('mount')}, "
             f"usage={_format_percent(result.get('usage_percent'))}, "
             f"used={_format_number(result.get('used_gb'), 'GB')}, "
             f"total={_format_number(result.get('total_gb'), 'GB')}, "
@@ -399,6 +453,7 @@ def summarize_disk_tool_result(tool_name: str, raw_result: Any) -> str:
 
     if tool_name == "query_docker_disk_usage":
         return (
+            f"source={result.get('source')}, "
             f"images={_format_number(result.get('images_gb'), 'GB')}, "
             f"containers={_format_number(result.get('containers_gb'), 'GB')}, "
             f"volumes={_format_number(result.get('volumes_gb'), 'GB')}, "

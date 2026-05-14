@@ -1,4 +1,4 @@
-"""智能运维监控 MCP Server
+﻿"""智能运维监控 MCP Server
 
 本地实现的监控服务 MCP Server，提供：
 - 监控数据查询（CPU、内存、磁盘、网络等）
@@ -18,6 +18,13 @@ from pathlib import Path
 from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastmcp import FastMCP
+
+from app.monitoring.monitor_provider import (
+    get_disk_usage_data,
+    get_monitor_provider_name,
+    list_large_directories_data,
+    query_docker_disk_usage_data,
+)
 
 # 配置日志
 logging.basicConfig(
@@ -168,6 +175,9 @@ def _load_disk_mock_data() -> dict[str, Any]:
     """Load mock disk diagnostic data from disk.json."""
     with DISK_MOCK_PATH.open("r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+logger.info("Monitor MCP provider initialized: %s", get_monitor_provider_name())
 
 
 
@@ -605,41 +615,15 @@ def list_all_services() -> Dict[str, Any]:
 @mcp.tool()
 @log_tool_call
 def get_disk_usage(hostname: Optional[str] = None, mount: str = "/") -> Dict[str, Any]:
-    """Return mock disk usage for a host and mount point."""
-    payload = _load_disk_mock_data()
-    disk_usage = dict(payload.get("disk_usage", {}))
-    if hostname:
-        disk_usage["host"] = hostname
-    disk_usage["mount"] = mount or disk_usage.get("mount", "/")
-    usage_percent = float(disk_usage.get("usage_percent", 0))
-    disk_usage["status"] = "critical" if usage_percent >= 90 else "warning" if usage_percent >= 80 else "healthy"
-    return disk_usage
+    """Return disk usage from the configured monitor provider."""
+    return get_disk_usage_data(hostname=hostname, mount=mount)
 
 
 @mcp.tool()
 @log_tool_call
 def list_large_directories(path: str = "/", limit: int = 10) -> Dict[str, Any]:
-    """Return the top large directories from mock data."""
-    payload = _load_disk_mock_data()
-    reason_map = {
-        "/var/log": "业务日志与归档日志堆积",
-        "/var/lib/docker": "Docker 镜像、卷或构建缓存占用",
-        "/tmp": "临时文件未定期清理",
-        "/app/cache": "应用缓存未过期或未淘汰",
-    }
-    directories = []
-    for item in list(payload.get("large_directories", []) or [])[:limit]:
-        directory = dict(item)
-        directory["reason"] = directory.get("reason") or reason_map.get(
-            str(directory.get("path", "")),
-            "目录占用偏高，需要进一步核查内容组成",
-        )
-        directories.append(directory)
-    return {
-        "path": path,
-        "limit": limit,
-        "directories": directories,
-    }
+    """Return the top large directories from the configured monitor provider."""
+    return list_large_directories_data(path=path, limit=limit)
 
 
 @mcp.tool()
@@ -702,9 +686,8 @@ def query_deleted_open_files() -> Dict[str, Any]:
 @mcp.tool()
 @log_tool_call
 def query_docker_disk_usage() -> Dict[str, Any]:
-    """Return Docker disk usage from mock data."""
-    payload = _load_disk_mock_data()
-    return dict(payload.get("docker_usage", {}))
+    """Return Docker disk usage from the configured monitor provider."""
+    return query_docker_disk_usage_data()
 
 
 @mcp.tool()
@@ -732,7 +715,6 @@ def get_disk_cleanup_candidates() -> Dict[str, Any]:
         "need_approval": normalize(data.get("need_approval")),
         "forbidden": normalize(data.get("forbidden"), needs_reason=True),
     }
-
 
 if __name__ == "__main__":
     # 使用 streamable-http 模式，运行在 8004 端口

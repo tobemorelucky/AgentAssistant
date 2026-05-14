@@ -63,3 +63,4 @@
 - 优化 AIOps 报告样式：为 `.message.assistant.aiops-message` 下的 `h1/h2/h3`、段落、列表和代码块增加专属间距与换行约束，尽量保持页面纵向阅读，减少标题错位和横向撑开。
 - 重写 `README.md` 为干净的中文版本，补齐普通 RAG 对话、AIOps 默认巡检/自定义诊断、Tool Policy、Agent Trace、审批、Verifier、Incident Memory、Skill Draft、AIOps 专用 web_search、mock 数据链路、关键 `.env` 配置与主要接口说明，并明确 `aiops-docs` 是本地 Runbook 文档而非实时日志。
 - 2026-05-13：重写 `README.md`，清理原有乱码，改为可直接对外阅读的中文说明文档，覆盖普通 RAG、AIOps 模式、Skill Router、Tool Policy、Agent Trace、审批、Verifier、Incident Memory、Skill Draft、AIOps 专用 web_search、mock 数据链路、关键 `.env` 配置与主要接口说明。
+- 2026-05-14：为 AIOps Monitor MCP 新增 provider 抽象，支持 `AIOPS_MONITOR_PROVIDER=mock|remote_host`。第一轮已把 `get_disk_usage`、`list_large_directories`、`query_docker_disk_usage` 从纯 mock 升级为可读取远程 Ubuntu Host Agent 数据，并在 provider 层完成返回结构适配、`source=remote_host` 标记、超时/非 200/非法 JSON/结构化错误兜底，保证 AIOps 工作流不会因远程采集失败直接崩溃。

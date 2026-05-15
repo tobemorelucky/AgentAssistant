@@ -345,7 +345,7 @@ AIOPS_REMOTE_HOST_TOKEN=
 - 向量模型优先读取 `EMBEDDING_*`
 - 不建议把多模态模型填到 `TEXT_EMBEDDING_MODEL`
 - `AIOPS_MONITOR_PROVIDER=remote_host` 时，Monitor MCP 会改为请求远程 Host Agent
-- `AIOPS_REMOTE_HOST_TOKEN` 当前按 `Authorization: Bearer <token>` 方式发送；如果远程 Agent 不需要认证，可留空
+- `AIOPS_REMOTE_HOST_TOKEN` 当前按 `X-Host-Agent-Token: <token>` 方式发送；如果远程 Agent 不需要认证，可留空
 
 ### 3. 启动依赖
 

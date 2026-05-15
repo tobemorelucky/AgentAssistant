@@ -343,9 +343,9 @@ class AIOpsService:
             if current_state.get("response") and not plan:
                 events.append(
                     {
-                        "type": "report",
-                        "stage": "inspection_report",
-                        "message": "巡检报告已生成",
+                        "type": "report_draft",
+                        "stage": "candidate_report",
+                        "message": "候选报告已生成，等待 Verifier 校验",
                         "report": current_state.get("response", ""),
                     }
                 )
@@ -394,9 +394,9 @@ class AIOpsService:
             if node_output.get("response"):
                 events.append(
                     {
-                        "type": "report",
-                        "stage": "final_report",
-                        "message": "最终报告已生成",
+                        "type": "report_draft",
+                        "stage": "candidate_report",
+                        "message": "候选报告已生成，等待 Verifier 校验",
                         "report": node_output.get("response", ""),
                     }
                 )

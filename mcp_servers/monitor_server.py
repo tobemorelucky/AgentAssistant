@@ -22,7 +22,9 @@ from fastmcp import FastMCP
 from app.monitoring.monitor_provider import (
     get_disk_usage_data,
     get_monitor_provider_name,
+    list_large_files_data,
     list_large_directories_data,
+    query_deleted_open_files_data,
     query_docker_disk_usage_data,
 )
 
@@ -629,58 +631,15 @@ def list_large_directories(path: str = "/", limit: int = 10) -> Dict[str, Any]:
 @mcp.tool()
 @log_tool_call
 def list_large_files(path: str = "/", min_size_mb: int = 100, limit: int = 20) -> Dict[str, Any]:
-    """Return mock large files above a size threshold."""
-    payload = _load_disk_mock_data()
-    files = list(payload.get("large_files", []) or [])
-    min_size_gb = round(min_size_mb / 1024, 3)
-    filtered = []
-    for item in files:
-        if float(item.get("size_gb", 0)) < min_size_gb:
-            continue
-        file_item = dict(item)
-        file_path = str(file_item.get("path", ""))
-        if "safe_action" not in file_item:
-            file_item["safe_action"] = (
-                "先确认日志保留策略，再执行轮转、压缩或归档"
-                if file_path.lower().endswith(".log")
-                else "需要结合业务影响评估后再处理"
-            )
-        if "risk" not in file_item:
-            file_item["risk"] = (
-                "直接删除可能影响审计、排障或业务写入"
-                if file_path.lower().endswith(".log")
-                else "需要确认文件是否被在线业务依赖"
-            )
-        filtered.append(file_item)
-    return {
-        "path": path,
-        "min_size_mb": min_size_mb,
-        "limit": limit,
-        "files": filtered[:limit],
-    }
+    """Return large files from the configured monitor provider."""
+    return list_large_files_data(path=path, min_size_mb=min_size_mb, limit=limit)
 
 
 @mcp.tool()
 @log_tool_call
 def query_deleted_open_files() -> Dict[str, Any]:
-    """Return deleted-but-still-open files from mock data."""
-    payload = _load_disk_mock_data()
-    files = []
-    for item in list(payload.get("deleted_open_files", []) or []):
-        file_item = dict(item)
-        process_name = file_item.get("process") or file_item.get("process_name") or ""
-        file_item["process"] = process_name
-        file_item["file"] = file_item.get("file") or file_item.get("path")
-        file_item["suggestion"] = file_item.get("suggestion") or (
-            f"在业务低峰平滑重启 {process_name}，释放已删除但未归还的磁盘空间"
-            if process_name
-            else "确认句柄所属进程后再安排平滑重启释放空间"
-        )
-        files.append(file_item)
-    return {
-        "files": files,
-        "total": len(files),
-    }
+    """Return deleted-but-still-open files from the configured monitor provider."""
+    return query_deleted_open_files_data()
 
 
 @mcp.tool()

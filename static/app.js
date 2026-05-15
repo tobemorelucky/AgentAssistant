@@ -11,6 +11,7 @@
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
         this.currentAIOpsFeedback = null;
+        this.currentAIOpsCompleted = false;
         this.pendingApproval = null;
 
         this.initializeElements();
@@ -310,6 +311,7 @@
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
         this.currentAIOpsFeedback = null;
+        this.currentAIOpsCompleted = false;
         this.pendingApproval = null;
         this.renderCurrentConversation();
         this.scrollToBottom();
@@ -324,6 +326,7 @@
         this.currentAIOpsContext = null;
         this.currentAIOpsState = null;
         this.currentAIOpsFeedback = null;
+        this.currentAIOpsCompleted = false;
         this.pendingApproval = null;
         if (this.messageInput) this.messageInput.value = "";
         this.renderCurrentConversation();
@@ -337,6 +340,7 @@
         this.currentAIOpsMessage = null;
         this.currentAIOpsTrace = [];
         this.currentAIOpsFeedback = null;
+        this.currentAIOpsCompleted = false;
 
         this.currentChatHistory.forEach((message) => {
             const element = this.addMessage(message.type, message.content, false, false, message);
@@ -344,12 +348,14 @@
                 element.classList.add("aiops-message");
                 this.currentAIOpsMessage = element;
                 this.currentAIOpsTrace = Array.isArray(message.traceEntries) ? [...message.traceEntries] : [];
+                this.currentAIOpsCompleted = false;
                 this.renderTraceTimeline(element, message.traceEntries || []);
             }
             if (message.meta === "aiops-final") {
                 element.classList.add("aiops-message");
                 this.currentAIOpsMessage = element;
                 this.currentAIOpsTrace = Array.isArray(message.traceEntries) ? [...message.traceEntries] : [];
+                this.currentAIOpsCompleted = true;
                 this.currentAIOpsFeedback = {
                     sessionId: message.sessionId || this.sessionId,
                     feedbackStatus: message.feedbackStatus || "pending",
@@ -371,7 +377,8 @@
             plan: [],
             steps: [],
             verifier: null,
-            report: "",
+            candidateReport: "",
+            finalReport: "",
             error: "",
         };
     }
@@ -458,7 +465,7 @@
         const state = this.ensureAIOpsState();
         if (final) {
             const sections = [];
-            if (state.report) sections.push(String(state.report).trim());
+            if (state.finalReport) sections.push(String(state.finalReport).trim());
             if (state.error) sections.push(`## \u9519\u8bef\n${state.error}`);
             return sections.join("\n\n").trim() || "AIOps \u8bca\u65ad\u5df2\u5b8c\u6210\u3002";
         }
@@ -503,11 +510,13 @@
             (state.verifier.suggested_next_steps || []).forEach((item) => lines.push(`- \u5efa\u8bae\u8865\u5145\uff1a${item}`));
         }
 
-        if (state.report) {
+        if (state.candidateReport) {
             lines.push("");
-            lines.push("## \u6700\u7ec8\u62a5\u544a");
+            lines.push("## \u5019\u9009\u62a5\u544a\uff08\u7b49\u5f85\u6821\u9a8c\uff09");
             lines.push("");
-            lines.push(state.report);
+            lines.push("> \u8fd9\u4efd\u62a5\u544a\u8fd8\u5728\u7b49\u5f85 Verifier \u6821\u9a8c\uff0c\u8bca\u65ad\u6d41\u7a0b\u53ef\u80fd\u7ee7\u7eed\u8865\u5145\u8bc1\u636e\u3002");
+            lines.push("");
+            lines.push(state.candidateReport);
         }
 
         if (state.error) {
@@ -763,6 +772,10 @@
     async processAIOpsPayload(payload) {
         if (!payload) return false;
 
+        if (this.currentAIOpsCompleted && payload.type !== "complete") {
+            return true;
+        }
+
         if (payload.type === "trace" && payload.trace) {
             this.currentAIOpsTrace.push(payload.trace);
             this.renderAIOpsProgress();
@@ -809,8 +822,9 @@
             return true;
         }
 
-        if (payload.type === "report") {
-            this.ensureAIOpsState().report = payload.report || this.ensureAIOpsState().report;
+        if (payload.type === "report_draft" || payload.type === "candidate_report" || payload.type === "report") {
+            this.ensureAIOpsState().candidateReport = payload.report || this.ensureAIOpsState().candidateReport;
+            this.addAIOpsStatus(payload.message || "\u5019\u9009\u62a5\u544a\u5df2\u751f\u6210\uff0c\u7b49\u5f85 Verifier \u6821\u9a8c", payload.stage || "candidate_report");
             this.renderAIOpsProgress();
             return false;
         }
@@ -819,10 +833,12 @@
             const finalReport =
                 payload.diagnosis?.report ||
                 payload.response ||
-                this.ensureAIOpsState().report ||
+                this.ensureAIOpsState().candidateReport ||
+                this.ensureAIOpsState().finalReport ||
                 "AIOps \u8bca\u65ad\u5df2\u5b8c\u6210\u3002";
-            this.ensureAIOpsState().report = finalReport;
+            this.ensureAIOpsState().finalReport = finalReport;
             this.addAIOpsStatus("AIOps \u8bca\u65ad\u5b8c\u6210", "complete");
+            this.currentAIOpsCompleted = true;
             this.updateAIOpsMessage(
                 this.currentAIOpsMessage,
                 this.buildAIOpsMarkdown({ final: true }),
@@ -858,6 +874,7 @@
                 this.currentAIOpsContext = { task, mode };
                 this.currentAIOpsState = this.createAIOpsRenderState(task, mode);
                 this.currentAIOpsTrace = [];
+                this.currentAIOpsCompleted = false;
                 this.currentAIOpsMessage = this.addLoadingMessage("AIOps Agent 正在启动诊断...");
                 this.currentAIOpsMessage.classList.add("aiops-message");
                 this.addAIOpsStatus("AIOps Agent 正在启动诊断...", "workflow_started");

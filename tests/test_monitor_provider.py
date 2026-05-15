@@ -1,16 +1,53 @@
+import sys
+import types
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "app" / "monitoring" / "monitor_provider.py"
-SPEC = spec_from_file_location("test_monitor_provider_module", MODULE_PATH)
-assert SPEC and SPEC.loader
-monitor_provider = module_from_spec(SPEC)
-SPEC.loader.exec_module(monitor_provider)
 
 
-def test_monitor_provider_defaults_to_mock(monkeypatch):
-    monkeypatch.delenv("AIOPS_MONITOR_PROVIDER", raising=False)
+def _load_monitor_provider_module():
+    original_app = sys.modules.get("app")
+    original_app_config = sys.modules.get("app.config")
+
+    fake_app_module = types.ModuleType("app")
+    fake_app_module.__path__ = []  # type: ignore[attr-defined]
+    fake_config_module = types.ModuleType("app.config")
+    fake_config_module.config = types.SimpleNamespace(
+        aiops_monitor_provider="mock",
+        aiops_remote_host_base_url="",
+        aiops_remote_host_token="",
+    )
+
+    sys.modules["app"] = fake_app_module
+    sys.modules["app.config"] = fake_config_module
+
+    try:
+        spec = spec_from_file_location("test_monitor_provider_module", MODULE_PATH)
+        assert spec and spec.loader
+        module = module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        if original_app is not None:
+            sys.modules["app"] = original_app
+        else:
+            sys.modules.pop("app", None)
+
+        if original_app_config is not None:
+            sys.modules["app.config"] = original_app_config
+        else:
+            sys.modules.pop("app.config", None)
+
+
+monitor_provider = _load_monitor_provider_module()
+
+
+def test_monitor_provider_defaults_to_mock():
+    monitor_provider.config.aiops_monitor_provider = "mock"
+    monitor_provider.config.aiops_remote_host_base_url = ""
+    monitor_provider.config.aiops_remote_host_token = ""
 
     result = monitor_provider.get_disk_usage_data(hostname="demo-server-01", mount="/")
 
@@ -21,8 +58,9 @@ def test_monitor_provider_defaults_to_mock(monkeypatch):
 
 
 def test_remote_host_disk_usage_adapts_success(monkeypatch):
-    monkeypatch.setenv("AIOPS_MONITOR_PROVIDER", "remote_host")
-    monkeypatch.setenv("AIOPS_REMOTE_HOST_BASE_URL", "http://192.168.6.129:9001")
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
 
     def fake_request(path, params=None):
         assert path == "/api/v1/disk/usage"
@@ -48,8 +86,9 @@ def test_remote_host_disk_usage_adapts_success(monkeypatch):
 
 
 def test_remote_host_timeout_returns_structured_error(monkeypatch):
-    monkeypatch.setenv("AIOPS_MONITOR_PROVIDER", "remote_host")
-    monkeypatch.setenv("AIOPS_REMOTE_HOST_BASE_URL", "http://192.168.6.129:9001")
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
 
     def fake_request(path, params=None):
         raise monitor_provider.httpx.TimeoutException("timeout")
@@ -65,8 +104,9 @@ def test_remote_host_timeout_returns_structured_error(monkeypatch):
 
 
 def test_remote_host_docker_error_is_non_fatal(monkeypatch):
-    monkeypatch.setenv("AIOPS_MONITOR_PROVIDER", "remote_host")
-    monkeypatch.setenv("AIOPS_REMOTE_HOST_BASE_URL", "http://192.168.6.129:9001")
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
 
     def fake_request(path, params=None):
         assert path == "/api/v1/docker/disk-usage"
@@ -79,3 +119,86 @@ def test_remote_host_docker_error_is_non_fatal(monkeypatch):
     assert result["ok"] is False
     assert result["source"] == "remote_host"
     assert result["error_code"] == "docker_unavailable"
+
+
+def test_remote_host_large_files_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/disk/large-files"
+        assert params == {"path": "/", "min_size_mb": 100, "limit": 20}
+        return 200, {
+            "ok": True,
+            "files": [
+                {"path": "/swap.img", "size_mb": 4096.0, "size_gb": 4.0, "scan_root": "/", "warning": ""},
+                {"path": "/var/log/syslog", "size_mb": 512.0, "scan_root": "/", "warning": "rotating soon"},
+            ],
+            "warnings": [],
+            "scan_root": "/",
+            "min_size_mb": 100,
+            "limit": 20,
+            "scan_incomplete": True,
+            "skipped_paths": ["/proc"],
+            "skipped_count": 1,
+            "permission_denied_count": 2,
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_large_files_data(path="/", min_size_mb=100, limit=20)
+
+    assert result["ok"] is True
+    assert result["source"] == "remote_host"
+    assert result["files"][0]["path"] == "/swap.img"
+    assert result["files"][0]["size_gb"] == 4.0
+    assert result["files"][1]["size_gb"] == 0.5
+    assert result["scan_incomplete"] is True
+    assert result["permission_denied_count"] == 2
+
+
+def test_remote_host_deleted_open_files_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/disk/deleted-open-files"
+        assert params is None
+        return 200, {
+            "ok": True,
+            "message": "filtered",
+            "files": [],
+            "total": 0,
+            "total_raw": 5,
+            "total_filtered": 0,
+            "filtered_out_count": 5,
+            "filters_applied": ["exclude_memfd", "min_size_mb>=10"],
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.query_deleted_open_files_data()
+
+    assert result["ok"] is True
+    assert result["source"] == "remote_host"
+    assert result["filtered_out_count"] == 5
+    assert result["filters_applied"] == ["exclude_memfd", "min_size_mb>=10"]
+
+
+def test_remote_host_large_files_structured_error_is_non_fatal(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        return 200, {"ok": False, "message": "scan failed", "error_code": "scan_failed"}
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_large_files_data(path="/", min_size_mb=100, limit=20)
+
+    assert result["ok"] is False
+    assert result["source"] == "remote_host"
+    assert result["error_code"] == "scan_failed"

@@ -28,7 +28,7 @@ stop_controller = _load_module("app.agent.aiops.investigation.stop_controller", 
 def test_default_patrol_profile_is_registered():
     profile = profiles.resolve_selected_profile(mode="default", matched_skills=[])
     assert profile is not None
-    assert profile.profile_id == "default_patrol"
+    assert profile.profile_id == "patrol_dispatch_profile"
     assert profiles.supports_profile_execution(profile.profile_id) is True
 
 
@@ -54,8 +54,9 @@ def test_missing_execution_profile_defaults_to_knowledge_only_or_reference_path(
 
 def test_evidence_store_starts_empty_for_default_patrol():
     store = evidence.build_evidence_store(profiles.DEFAULT_PATROL_PROFILE)
-    assert "alert" in store
-    assert store["alert"]["status"] == models.EvidenceStatus.MISSING
+    assert "active_alerts" in store
+    assert "target_alert" in store
+    assert store["active_alerts"]["status"] == models.EvidenceStatus.MISSING
 
 
 def test_stop_controller_finalizes_with_limitations_after_no_progress():

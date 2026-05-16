@@ -14,15 +14,7 @@ from app.agent.aiops.disk_cleanup import (
     extract_disk_tools_from_steps,
     is_disk_cleanup_request,
 )
-from app.agent.aiops.investigation import StopDecision, StopDecisionType
-from app.agent.aiops.investigation import (
-    build_disk_investigation_report,
-    build_follow_up_tasks,
-    compute_no_progress_rounds,
-    decide_disk_stop,
-    is_disk_pressure_profile,
-    summarize_evidence_store,
-)
+from app.agent.aiops.investigation import StopDecision, StopDecisionType, get_runtime
 from app.agent.aiops.patrol import (
     build_alert_report,
     collect_evidence_gaps,
@@ -59,7 +51,7 @@ class Response(BaseModel):
 
 
 class Act(BaseModel):
-    """Replanner action."""
+    """Replanner action for legacy generic chains."""
 
     action: str = Field(...)
     new_steps: list[str] = Field(default_factory=list)
@@ -134,8 +126,8 @@ def _extract_report_sections(past_steps: list[tuple[str, str]]) -> tuple[list[st
                 metadata = artifact.get("metadata") or {}
                 web_references.append(
                     {
-                        "title": str(metadata.get("title") or "未提供标题"),
-                        "url": str(metadata.get("source") or "未提供链接"),
+                        "title": str(metadata.get("title") or "外部参考资料"),
+                        "url": str(metadata.get("source") or "未返回链接"),
                         "summary": str(artifact.get("page_content") or parsed.get("content") or "").replace("\n", " ")[:220],
                     }
                 )
@@ -144,56 +136,51 @@ def _extract_report_sections(past_steps: list[tuple[str, str]]) -> tuple[list[st
 
 
 def _build_generic_template_report(state: PlanExecuteState) -> str:
-    task = str(state.get("input", "")).strip() or "未提供任务"
+    task = str(state.get("input", "")).strip() or "AIOps 自定义诊断"
     past_steps = list(state.get("past_steps", []))
     local_evidence, web_references, tool_names = _extract_report_sections(past_steps)
 
-    local_lines = local_evidence[:3] or ["- 本地知识库未返回可直接复用的 Runbook 内容。"]
-    local_block = "\n".join(
-        line if line.startswith("- ") else f"- {line}"
-        for line in local_lines
-    )
+    local_lines = local_evidence[:3] or ["- 当前只拿到了有限的本地 Runbook 参考。"]
+    local_block = "\n".join(line if line.startswith("- ") else f"- {line}" for line in local_lines)
 
     if web_references:
         web_block = "\n".join(
             [
-                f"- 资料标题：{item['title']}\n  链接：{item['url']}\n  摘要：{item['summary']}\n  用途：用于补充公开文档说明，不作为本地故障直接证据。"
+                f"- 资料标题：{item['title']}\n  链接：{item['url']}\n  摘要：{item['summary']}\n  用途：仅作为外部参考，不直接作为本地故障事实证据。"
                 for item in web_references
             ]
         )
     else:
-        web_block = "- 本次诊断未使用联网搜索资料。"
+        web_block = "- 当前没有补充联网参考资料。"
 
-    evidence_note = "已完成本地资料检索" if "retrieve_knowledge" in tool_names else "本次未能完成本地资料检索"
+    evidence_note = "本次结论包含本地 Runbook 参考。" if "retrieve_knowledge" in tool_names else "本次没有命中有效的本地 Runbook。"
     if "web_search" in tool_names:
-        evidence_note += "，并补充了公开文档参考"
+        evidence_note += " 同时补充了外部公开资料。"
 
     return dedent(
         f"""
         # AIOps 诊断报告
 
-        ## 当前结论
-        - 当前流程基于已收集的本地资料与可选外部参考，形成了初步排查建议。
-        - 由于这是一条通用自定义诊断链路，本次优先给出镜像冲突的定位思路、风险点与人工确认建议。
+        ## 诊断对象
+        - 任务：{task}
+        - 当前结果基于有限的本地知识和执行历史整理，不代表已完成深度现场排查。
 
-        ## 本地知识库 Runbook 证据
+        ## 本地知识 / Runbook 证据
         {local_block}
 
         ## 联网搜索补充资料
         {web_block}
 
-        ## 排查建议
-        - 优先核对镜像名称、标签、仓库来源、镜像拉取策略以及是否存在同名不同仓库镜像混用。
-        - 如果问题发生在部署或构建阶段，建议进一步确认 `docker pull`、`docker compose`、CI 构建缓存与镜像仓库认证配置是否一致。
-        - 如果需要处理本地镜像、构建缓存或容器，请先人工确认受影响服务和回滚方式，再执行变更操作。
+        ## 结论与建议
+        - 当前更适合作为受控的参考性结论，而不是现场根因确认结论。
+        - 如果后续要进入深度诊断，需要对应 execution_profile 和明确的 required evidence slots。
 
         ## 风险提示
-        - 本次诊断未执行任何镜像删除、覆盖、pull、prune、rm 或其他危险操作。
-        - `docker image rm`、`docker system prune`、批量删除镜像标签等操作都应视为人工确认后执行的高风险动作。
+        - 本次没有执行任何删除、覆盖、pull、prune 或 rm -rf 操作。
+        - 涉及镜像、缓存、构建产物或服务重启的动作，都应在人工确认后执行。
 
         ## 说明
-        - {evidence_note}。
-        - 如果后续需要更精确结论，建议补充具体报错信息、镜像名称、标签、仓库地址和触发场景。
+        - {evidence_note}
         """
     ).strip()
 
@@ -209,6 +196,8 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
     target_alert = state.get("target_alert")
     matched_skills = state.get("matched_skills", [])
     plan_source = state.get("plan_source", "")
+    selected_profile = state.get("selected_profile") or {}
+    runtime = get_runtime(selected_profile.get("profile_id") if isinstance(selected_profile, dict) else None)
 
     if verifier_result and not verifier_result.get("passed", True) and plan_source in LEGACY_GENERIC_PLAN_SOURCES:
         response = state.get("response", "")
@@ -235,17 +224,11 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
             ],
         }
 
-    if is_disk_pressure_profile(state.get("selected_profile")):
-        previous_no_progress = int(state.get("no_progress_rounds") or 0)
-        last_slot = state.get("last_investigation_slot")
-        no_progress_rounds = compute_no_progress_rounds(
-            dict(state.get("evidence_store") or {}),
-            previous_no_progress_rounds=previous_no_progress,
-            last_slot=last_slot if isinstance(last_slot, str) else None,
-        )
-        state_for_disk = dict(state)
-        state_for_disk["no_progress_rounds"] = no_progress_rounds
-        stop_decision = decide_disk_stop(state_for_disk)
+    if runtime is not None and plan_source == "investigation_runtime":
+        no_progress_rounds = runtime.compute_no_progress_rounds(state)
+        state_for_runtime = dict(state)
+        state_for_runtime["no_progress_rounds"] = no_progress_rounds
+        stop_decision = runtime.decide_stop(state_for_runtime)
 
         if plan:
             return {
@@ -255,14 +238,14 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="success",
-                        title="Disk pressure investigation continues",
-                        result_summary=summarize_evidence_store(dict(state.get("evidence_store") or {})),
+                        title=f"{selected_profile.get('profile_id')} investigation continues",
+                        result_summary=runtime.summarize_evidence_store(state_for_runtime),
                     )
                 ],
             }
 
         if verifier_result and not verifier_result.get("passed", True):
-            next_tasks = build_follow_up_tasks(state_for_disk)
+            next_tasks = runtime.build_follow_up_tasks(state_for_runtime)
             if next_tasks and stop_decision.decision != StopDecisionType.FINALIZE_WITH_LIMITATIONS:
                 return {
                     "plan": next_tasks,
@@ -274,18 +257,18 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                             session_id=session_id,
                             node="replanner",
                             status="warning",
-                            title="Disk investigation requested follow-up evidence",
+                            title=f"{selected_profile.get('profile_id')} requested follow-up evidence",
                             result_summary=" | ".join(task["tool"] for task in next_tasks),
                             metadata={"missing_slots": verifier_result.get("missing_evidence", [])},
                         )
                     ],
                 }
 
-            response = state.get("response", "") or build_disk_investigation_report(state_for_disk)
+            response = state.get("response", "") or runtime.build_report(state_for_runtime)
             if stop_decision.decision == StopDecisionType.CONTINUE:
                 stop_decision = StopDecision(
                     decision=StopDecisionType.FINALIZE_WITH_LIMITATIONS,
-                    reason="Disk investigation produced no new follow-up evidence tasks.",
+                    reason="Investigation produced no new follow-up evidence tasks.",
                     missing_slots=list(verifier_result.get("missing_evidence", [])),
                 )
             return {
@@ -298,13 +281,13 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="warning",
-                        title="Disk investigation finalized with evidence limits",
+                        title=f"{selected_profile.get('profile_id')} finalized with evidence limits",
                         result_summary=stop_decision.reason,
                     )
                 ],
             }
 
-        next_tasks = build_follow_up_tasks(state_for_disk)
+        next_tasks = runtime.build_follow_up_tasks(state_for_runtime)
         if next_tasks and stop_decision.decision != StopDecisionType.FINALIZE_WITH_LIMITATIONS:
             return {
                 "plan": next_tasks,
@@ -316,13 +299,13 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="success",
-                        title="Disk investigation planned follow-up evidence",
+                        title=f"{selected_profile.get('profile_id')} planned follow-up evidence",
                         result_summary=" | ".join(task["tool"] for task in next_tasks),
                     )
                 ],
             }
 
-        response = build_disk_investigation_report(state_for_disk)
+        response = runtime.build_report(state_for_runtime)
         return {
             "response": response,
             "plan": [],
@@ -333,12 +316,13 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                     session_id=session_id,
                     node="replanner",
                     status="success",
-                    title="Disk pressure investigation report drafted",
-                    result_summary=summarize_evidence_store(dict(state.get("evidence_store") or {})),
+                    title=f"{selected_profile.get('profile_id')} report drafted",
+                    result_summary=runtime.summarize_evidence_store(state_for_runtime),
                 )
             ],
         }
 
+    # Legacy compatibility path. Phase 5 can remove this branch after full migration.
     if is_disk_cleanup_request(input_text, matched_skills):
         if verifier_result and not verifier_result.get("passed", True) and plan:
             executed_tools = set(extract_disk_tools_from_steps([step for step, _ in past_steps]))
@@ -347,8 +331,8 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                 response = build_disk_cleanup_report(input_text, past_steps)
                 response = (
                     f"{response}\n\n## 证据边界说明\n"
-                    "- Verifier 要求补充的同类磁盘工具已经执行过，但当前没有新增有效证据。\n"
-                    "- 本次诊断在现有证据边界内收口，未再重复调用相同工具。"
+                    "- Verifier 判断当前证据仍有缺口，但继续重复 legacy 补查已经不会产生新证据。\n"
+                    "- 因此系统在这一轮选择受控收口，而不是继续让旧链路重复增长 Trace。"
                 )
                 return {
                     "response": response,
@@ -358,7 +342,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                             session_id=session_id,
                             node="replanner",
                             status="warning",
-                            title="Disk cleanup finalized with evidence limits",
+                            title="Legacy disk cleanup finalized with evidence limits",
                             result_summary="Repeated follow-up tools produced no new evidence",
                         )
                     ],
@@ -370,7 +354,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="success",
-                        title="Disk cleanup flow continues",
+                        title="Legacy disk cleanup flow continues",
                         result_summary=f"Remaining steps: {len(plan)}",
                     )
                 ]
@@ -383,12 +367,13 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                     session_id=session_id,
                     node="replanner",
                     status="success",
-                    title="Disk cleanup report drafted",
+                    title="Legacy disk cleanup report drafted",
                     result_summary=response[:280],
                 )
             ],
         }
 
+    # Legacy default patrol deep-diagnosis branch. Phase 5 can remove this branch.
     if target_alert:
         if verifier_result and not verifier_result.get("passed", True):
             local_tools = get_aiops_local_tools()
@@ -411,7 +396,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                             session_id=session_id,
                             node="replanner",
                             status="warning",
-                            title="Verifier triggered evidence补查",
+                            title="Legacy patrol requested more evidence",
                             result_summary=" | ".join(step.tool for step in evidence_gaps[:4]),
                         )
                     ],
@@ -424,7 +409,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="success",
-                        title="Structured patrol continues",
+                        title="Legacy patrol continues",
                         result_summary=f"Remaining steps: {len(plan)}",
                     )
                 ]
@@ -452,7 +437,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                         session_id=session_id,
                         node="replanner",
                         status="warning",
-                        title="Replanner requested more evidence",
+                        title="Legacy patrol requested more evidence",
                         result_summary=" | ".join(step.tool for step in evidence_gaps[:4]),
                     )
                 ],
@@ -466,7 +451,7 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                     session_id=session_id,
                     node="replanner",
                     status="success",
-                    title="Default patrol report drafted",
+                    title="Legacy patrol report drafted",
                     result_summary=response[:280],
                     metadata={"remaining_gaps": [step.evidence_type for step in evidence_gaps]},
                 )

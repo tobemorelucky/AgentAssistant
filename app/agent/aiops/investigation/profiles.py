@@ -5,23 +5,28 @@ from __future__ import annotations
 from .models import DiagnosisIntent, DiagnosisProfile
 
 
-DEFAULT_PATROL_PROFILE = DiagnosisProfile(
-    profile_id="default_patrol",
-    supported_intents=[DiagnosisIntent.DEFAULT_PATROL, DiagnosisIntent.INCIDENT_DIAGNOSIS],
-    resource_type="service_alert",
-    required_evidence_slots=["alert", "metric", "process", "log", "historical", "runbook"],
-    conditional_evidence_slots=["memory", "external_reference"],
-    reference_evidence_slots=["runbook"],
-    stop_rules={"max_rounds": 3, "max_no_progress_rounds": 1, "max_attempts_per_slot": 1},
+PATROL_DISPATCH_PROFILE = DiagnosisProfile(
+    profile_id="patrol_dispatch_profile",
+    supported_intents=[DiagnosisIntent.DEFAULT_PATROL],
+    resource_type="alert_triage",
+    required_evidence_slots=["active_alerts", "target_alert"],
+    conditional_evidence_slots=[],
+    reference_evidence_slots=[],
+    stop_rules={
+        "max_rounds": 1,
+        "max_no_progress_rounds": 0,
+        "max_attempts_per_slot": 1,
+    },
     report_schema=[
-        "任务与对象",
-        "已确认事实",
-        "关键证据",
-        "影响范围",
-        "风险提示",
-        "处理建议",
+        "巡检结果",
+        "目标告警",
+        "分发决策",
+        "后续说明",
     ],
 )
+
+# Compatibility alias. Phase 5 can remove this name after all legacy imports are gone.
+DEFAULT_PATROL_PROFILE = PATROL_DISPATCH_PROFILE
 
 DISK_PRESSURE_PROFILE = DiagnosisProfile(
     profile_id="disk_pressure_profile",
@@ -52,12 +57,12 @@ DISK_PRESSURE_PROFILE = DiagnosisProfile(
 )
 
 PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
-    DEFAULT_PATROL_PROFILE.profile_id: DEFAULT_PATROL_PROFILE,
+    PATROL_DISPATCH_PROFILE.profile_id: PATROL_DISPATCH_PROFILE,
     DISK_PRESSURE_PROFILE.profile_id: DISK_PRESSURE_PROFILE,
 }
 
 EXECUTABLE_PROFILE_IDS = {
-    DEFAULT_PATROL_PROFILE.profile_id,
+    PATROL_DISPATCH_PROFILE.profile_id,
     DISK_PRESSURE_PROFILE.profile_id,
 }
 
@@ -89,19 +94,18 @@ def infer_diagnosis_intent(
         "怎么办",
         "如何处理",
         "处理建议",
-        "清理建议",
-        "how to",
-        "what should",
-        "fix",
+        "修复",
         "cleanup",
+        "fix",
+        "how to",
     )
     status_tokens = (
         "现在",
         "当前",
-        "情况如何",
-        "status",
+        "状态",
         "usage",
-        "占用",
+        "status",
+        "情况如何",
         "空间使用情况",
     )
     if any(token in normalized for token in remediation_tokens):
@@ -120,7 +124,7 @@ def resolve_selected_profile(
 ) -> DiagnosisProfile | None:
     """Resolve the effective profile for the current request."""
     if mode == "default":
-        return DEFAULT_PATROL_PROFILE
+        return PATROL_DISPATCH_PROFILE
 
     for skill in matched_skills or []:
         if skill.get("skill_mode") != "execution_profile":

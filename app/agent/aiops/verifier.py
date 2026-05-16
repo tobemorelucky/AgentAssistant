@@ -6,8 +6,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.aiops.disk_cleanup import build_disk_verifier_findings, is_disk_cleanup_request
-from app.agent.aiops.investigation import StopDecision, StopDecisionType
-from app.agent.aiops.investigation import is_disk_pressure_profile, verify_disk_investigation_report
+from app.agent.aiops.investigation import StopDecision, StopDecisionType, get_runtime
 from app.agent.aiops.patrol import build_patrol_verifier_findings
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
@@ -38,18 +37,7 @@ class VerifierOutput(BaseModel):
     risk_warnings: list[str] = Field(default_factory=list)
 
 
-def _disk_investigation_verify(state: PlanExecuteState) -> VerifierOutput:
-    findings, missing, warnings = verify_disk_investigation_report(state)
-    return VerifierOutput(
-        passed=not findings,
-        findings=findings,
-        suggested_next_steps=[],
-        missing_evidence=missing,
-        risk_warnings=warnings,
-    )
-
-
-def _disk_verify(state: PlanExecuteState) -> VerifierOutput:
+def _legacy_disk_verify(state: PlanExecuteState) -> VerifierOutput:
     findings, suggested, missing, warnings = build_disk_verifier_findings(
         state.get("response", ""),
         state.get("past_steps", []),
@@ -68,7 +56,7 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     past_steps = state.get("past_steps", [])
 
     if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
-        return _disk_verify(state)
+        return _legacy_disk_verify(state)
 
     if state.get("target_alert"):
         findings, suggested, missing, warnings = build_patrol_verifier_findings(
@@ -91,19 +79,19 @@ def _heuristic_verify(state: PlanExecuteState) -> VerifierOutput:
     warnings: list[str] = []
 
     if len(past_steps) < 2:
-        findings.append("执行步骤过少，证据不足。")
-        suggested.append("补充更多工具证据后再生成报告。")
+        findings.append("执行历史过短，缺少足够证据支持结论。")
+        suggested.append("补充至少一个本地证据采集步骤，再重新整理报告。")
         missing.append("execution_history")
 
     if "风险提示" not in response:
-        findings.append("报告中缺少风险提示。")
-        suggested.append("补充风险提示并说明高风险操作需要人工审批。")
+        findings.append("报告缺少风险提示。")
+        suggested.append("补充风险提示章节，说明哪些动作需要人工确认。")
         missing.append("risk_warning")
 
     lowered = response.lower()
-    if any(keyword in lowered for keyword in ["restart", "prune", "rm -rf"]) and "审批" not in response:
-        findings.append("报告包含高风险建议但没有人工审批提示。")
-        suggested.append("在高风险建议处加入审批提示和风险说明。")
+    if any(keyword in lowered for keyword in ["restart", "prune", "rm -rf"]) and "人工确认" not in response:
+        findings.append("报告包含高风险建议，但没有明确的人工确认提示。")
+        suggested.append("为高风险建议补充人工确认和回滚提示。")
         warnings.append("high_risk_suggestion_without_warning")
 
     return VerifierOutput(
@@ -124,25 +112,25 @@ def _generic_template_verify(state: PlanExecuteState) -> VerifierOutput:
     warnings: list[str] = []
 
     if len(past_steps) < 2:
-        findings.append("通用诊断链路收集到的证据步骤过少。")
-        suggested.append("至少补充一次本地知识库检索，并在需要时补充公开文档参考。")
+        findings.append("受控模板链路的执行历史仍然太短，缺少支撑性资料。")
+        suggested.append("先补充本地知识或官方公开资料，再整理最终说明。")
         missing.append("execution_history")
 
     if not response.strip():
-        findings.append("最终报告为空。")
-        suggested.append("基于当前执行历史生成最终报告。")
+        findings.append("模板链路没有产出最终报告。")
+        suggested.append("整理当前步骤结果，生成一个受控收口报告。")
         missing.append("final_report")
 
     lowered = response.lower()
-    if "未执行任何" not in response and "没有执行任何" not in response and "no dangerous operation" not in lowered:
-        findings.append("报告没有明确说明未执行任何危险操作。")
-        suggested.append("在风险提示中明确声明未执行任何删除、覆盖、pull 或 prune 操作。")
+    if "没有执行任何" not in response and "no dangerous operation" not in lowered:
+        findings.append("报告缺少“未执行危险操作”的安全声明。")
+        suggested.append("补充安全声明，明确没有执行删除、覆盖、pull、prune 等动作。")
         warnings.append("missing_safety_disclaimer")
 
     used_web_search = any("web_search" in step for step, _ in past_steps)
     if used_web_search and "联网搜索补充资料" not in response:
-        findings.append("报告使用了联网资料，但没有单独区分外部参考。")
-        suggested.append("增加“联网搜索补充资料”章节，并附上标题与链接。")
+        findings.append("报告引用了联网搜索结果，但没有单独列出外部参考资料章节。")
+        suggested.append("补充“联网搜索补充资料”章节，标明标题、链接和用途。")
         missing.append("external_reference_section")
 
     return VerifierOutput(
@@ -170,12 +158,15 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
     session_id = state.get("session_id", "default")
     response = state.get("response", "")
     past_steps = state.get("past_steps", [])
+    selected_profile = state.get("selected_profile") or {}
+    runtime = get_runtime(selected_profile.get("profile_id") if isinstance(selected_profile, dict) else None)
 
     result: VerifierOutput
-    if is_disk_pressure_profile(state.get("selected_profile")):
-        result = _disk_investigation_verify(state)
+    if runtime is not None and state.get("plan_source") == "investigation_runtime":
+        runtime_result = runtime.verify_report(state)
+        result = VerifierOutput(**runtime_result)
     elif is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
-        result = _disk_verify(state)
+        result = _legacy_disk_verify(state)
     elif state.get("plan_source") == "controlled_no_profile":
         result = VerifierOutput(
             passed=True,
@@ -247,7 +238,7 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
                 ),
                 "trace_events": [trace_event],
             }
-        if is_disk_pressure_profile(state.get("selected_profile")):
+        if runtime is not None and state.get("plan_source") == "investigation_runtime":
             return {
                 "verifier_result": verifier_result,
                 "trace_events": [trace_event],

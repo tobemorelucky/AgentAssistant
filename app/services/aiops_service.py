@@ -112,6 +112,12 @@ class AIOpsService:
     def _after_planner(state: PlanExecuteState) -> str:
         if state.get("status") == "paused":
             return END
+        if state.get("response") and state.get("plan_source") in {
+            "patrol_dispatch_no_tool",
+            "patrol_dispatch_no_alert",
+            "patrol_dispatch_unsupported_profile",
+        }:
+            return END
         if state.get("response"):
             return NODE_VERIFIER
         if state.get("plan"):
@@ -131,18 +137,16 @@ class AIOpsService:
     @staticmethod
     def _after_verifier(state: PlanExecuteState) -> str:
         verifier_result = state.get("verifier_result", {})
-        selected_profile = state.get("selected_profile") or {}
         stop_decision = state.get("stop_decision") or {}
+        is_runtime_path = state.get("plan_source") == "investigation_runtime"
         if (
             verifier_result
             and not verifier_result.get("passed", True)
-            and selected_profile.get("profile_id") == "disk_pressure_profile"
             and stop_decision.get("decision") in {"finalize", "finalize_with_limitations"}
+            and is_runtime_path
         ):
             return END
-        if verifier_result and not verifier_result.get("passed", True) and (
-            state.get("plan") or selected_profile.get("profile_id") == "disk_pressure_profile"
-        ):
+        if verifier_result and not verifier_result.get("passed", True) and (state.get("plan") or is_runtime_path):
             return NODE_REPLANNER
         return END
 

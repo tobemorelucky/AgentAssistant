@@ -20,8 +20,7 @@ from app.agent.aiops.disk_cleanup import (
     summarize_disk_tool_result,
 )
 from app.agent.aiops.investigation import (
-    is_disk_pressure_profile,
-    update_disk_evidence_store,
+    get_runtime,
 )
 from app.agent.aiops.patrol import (
     parse_tool_plan_step,
@@ -126,16 +125,30 @@ async def _execute_investigation_task(
     slot = task["slot"]
     args = task["args"]
     task_label = task.get("reason") or f"Collect {slot} with {tool_name}"
+    selected_profile = state.get("selected_profile") or {}
+    runtime = get_runtime(selected_profile.get("profile_id") if isinstance(selected_profile, dict) else None)
+    if runtime is None:
+        raw_result = {"error": f"No runtime registered for profile: {selected_profile}", "tool": tool_name, "args": args}
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, _to_result_text(raw_result))],
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="executor",
+                    status="error",
+                    title="Investigation runtime missing",
+                    result_summary=raw_result["error"],
+                    metadata={"slot": slot, "execution_mode": "investigation"},
+                )
+            ],
+        }
     decision = check_tool_policy(tool_name)
 
     if decision["decision"] == "reject":
         raw_result = {"error": decision["reason"], "tool": tool_name, "args": args}
-        evidence_store = update_disk_evidence_store(
-            dict(state.get("evidence_store") or {}),
-            slot=slot,
-            tool_name=tool_name,
-            raw_result=raw_result,
-        )
+        evidence_store = runtime.update_evidence_store(dict(state), task, raw_result)
         return {
             "plan": remaining_plan,
             "status": "running",
@@ -200,14 +213,9 @@ async def _execute_investigation_task(
             status = "error"
     duration_ms = int((time.perf_counter() - started_ts) * 1000)
     ended_at = _now_iso()
-    normalized_result = normalize_disk_tool_result(tool_name, raw_result)
-    evidence_store = update_disk_evidence_store(
-        dict(state.get("evidence_store") or {}),
-        slot=slot,
-        tool_name=tool_name,
-        raw_result=raw_result,
-    )
-    result_summary = summarize_disk_tool_result(tool_name, normalized_result)
+    normalized_result = runtime.normalize_result(task, raw_result)
+    evidence_store = runtime.update_evidence_store(dict(state), task, raw_result)
+    result_summary = runtime.summarize_task_result(task, normalized_result)
     return {
         "plan": remaining_plan,
         "status": "running",
@@ -566,7 +574,9 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
         )
 
     investigation_task = _parse_investigation_task(current_step)
-    if investigation_task is not None and is_disk_pressure_profile(state.get("selected_profile")):
+    selected_profile = state.get("selected_profile") or {}
+    runtime = get_runtime(selected_profile.get("profile_id") if isinstance(selected_profile, dict) else None)
+    if investigation_task is not None and runtime is not None:
         return await _execute_investigation_task(
             state,
             task=investigation_task,

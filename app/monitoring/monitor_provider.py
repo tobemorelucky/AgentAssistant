@@ -131,6 +131,33 @@ def _to_float(value: Any) -> float | None:
         return None
 
 
+def _size_string_to_gb(value: Any) -> float | None:
+    if value is None:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    number_match = None
+    import re
+
+    match = re.match(r"^\s*([0-9]+(?:\.[0-9]+)?)\s*([A-Za-z]+)\s*$", text)
+    if not match:
+        return _to_float(value)
+    number_match = _to_float(match.group(1))
+    unit = match.group(2).upper()
+    if number_match is None:
+        return None
+    if unit in {"GB", "GIB"}:
+        return round(number_match, 2)
+    if unit in {"MB", "MIB"}:
+        return round(number_match / 1024, 2)
+    if unit in {"KB", "KIB"}:
+        return round(number_match / (1024**2), 4)
+    if unit in {"B", "BYTE", "BYTES"}:
+        return round(number_match / (1024**3), 4)
+    return None
+
+
 def _directory_reason(path: str) -> str:
     mapping = {
         "/var/log": "业务日志与归档日志堆积",
@@ -143,7 +170,7 @@ def _directory_reason(path: str) -> str:
 
 def _extract_directory_items(payload: Any) -> list[dict[str, Any]]:
     if isinstance(payload, dict):
-        for key in ("directories", "items", "results"):
+        for key in ("directories", "items", "results", "entries"):
             value = payload.get(key)
             if isinstance(value, list):
                 return [item for item in value if isinstance(item, dict)]
@@ -164,6 +191,23 @@ def _extract_docker_payload(payload: Any) -> dict[str, Any]:
         data = payload.get("data")
         if isinstance(data, dict):
             return data
+        if isinstance(data, list):
+            normalized: dict[str, Any] = {}
+            for item in data:
+                if not isinstance(item, dict):
+                    continue
+                item_type = str(item.get("type") or "").strip().lower()
+                size_gb = _size_string_to_gb(item.get("size"))
+                if item_type == "images":
+                    normalized["images_gb"] = size_gb
+                elif item_type == "containers":
+                    normalized["containers_gb"] = size_gb
+                elif item_type in {"local volumes", "volumes"}:
+                    normalized["volumes_gb"] = size_gb
+                elif item_type == "build cache":
+                    normalized["build_cache_gb"] = size_gb
+            if normalized:
+                return normalized
         return payload
     return {}
 
@@ -365,6 +409,8 @@ def list_large_directories_data(path: str = "/", limit: int = 10) -> dict[str, A
                 size_gb = round(size_mb / 1024, 2)
             elif size_bytes is not None:
                 size_gb = round(size_bytes / (1024**3), 2)
+            else:
+                size_gb = _size_string_to_gb(item.get("size_human"))
         directories.append(
             {
                 "path": directory_path,

@@ -9,7 +9,11 @@ from langchain_qwq import ChatQwen
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.agent.aiops.disk_cleanup import build_disk_cleanup_report, is_disk_cleanup_request
+from app.agent.aiops.disk_cleanup import (
+    build_disk_cleanup_report,
+    extract_disk_tools_from_steps,
+    is_disk_cleanup_request,
+)
 from app.agent.aiops.patrol import (
     build_alert_report,
     collect_evidence_gaps,
@@ -184,6 +188,29 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
     plan_source = state.get("plan_source", "")
 
     if is_disk_cleanup_request(input_text, matched_skills):
+        if verifier_result and not verifier_result.get("passed", True) and plan:
+            executed_tools = set(extract_disk_tools_from_steps([step for step, _ in past_steps]))
+            requested_tools = [tool for tool in extract_disk_tools_from_steps(plan) if tool]
+            if requested_tools and all(tool in executed_tools for tool in requested_tools):
+                response = build_disk_cleanup_report(input_text, past_steps)
+                response = (
+                    f"{response}\n\n## 证据边界说明\n"
+                    "- Verifier 要求补充的同类磁盘工具已经执行过，但当前没有新增有效证据。\n"
+                    "- 本次诊断在现有证据边界内收口，未再重复调用相同工具。"
+                )
+                return {
+                    "response": response,
+                    "plan": [],
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="warning",
+                            title="Disk cleanup finalized with evidence limits",
+                            result_summary="Repeated follow-up tools produced no new evidence",
+                        )
+                    ],
+                }
         if plan:
             return {
                 "trace_events": [

@@ -117,7 +117,7 @@
 
     updateUI() {
         if (this.currentModeText) {
-            this.currentModeText.textContent = this.currentMode === "stream" ? "娴佸紡" : "蹇嵎";
+            this.currentModeText.textContent = this.currentMode === "stream" ? "流式" : "快捷";
         }
         if (this.messageInput) this.messageInput.disabled = this.isStreaming;
         if (this.sendButton) this.sendButton.disabled = this.isStreaming;
@@ -194,7 +194,7 @@
                 <div class="history-item-content">
                     <span class="history-item-title">${this.escapeHtml(history.title)}</span>
                 </div>
-                <button class="history-item-delete" title="鍒犻櫎">
+                <button class="history-item-delete" title="删除">
                     <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
                         <path d="M18 6L6 18M6 6L18 18" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
                     </svg>
@@ -251,7 +251,7 @@
         const body = document.createElement("div");
         body.className = `message-content ${isLoading ? "loading-message-content" : ""}`;
         if (isLoading) {
-            body.textContent = content || "澶勭悊涓?..";
+            body.textContent = content || "处理中...";
         } else if (type === "assistant") {
             body.innerHTML = this.renderMarkdown(content);
             this.highlightCodeBlocks(body);
@@ -285,7 +285,7 @@
         return message;
     }
 
-    addLoadingMessage(content = "澶勭悊涓?..") {
+    addLoadingMessage(content = "处理中...") {
         return this.addMessage("assistant", content, true, false);
     }
 
@@ -1007,7 +1007,7 @@
         }
     }
     async sendQuickMessage(message) {
-        const loading = this.addLoadingMessage("姝ｅ湪鐢熸垚鍥炲...");
+        const loading = this.addLoadingMessage("正在生成回复...");
         try {
             const response = await fetch(`${this.apiBaseUrl}/chat`, {
                 method: "POST",
@@ -1017,7 +1017,7 @@
             if (!response.ok) throw new Error(`HTTP ${response.status}`);
             const data = await response.json();
             loading.remove();
-            this.addMessage("assistant", data.data?.answer || data.data?.errorMessage || "娌℃湁杩斿洖缁撴灉");
+            this.addMessage("assistant", data.data?.answer || data.data?.errorMessage || "没有返回结果");
         } catch (error) {
             loading.remove();
             throw error;
@@ -1025,7 +1025,7 @@
     }
 
     async sendStreamMessage(message) {
-        const assistant = this.addLoadingMessage("姝ｅ湪鐢熸垚鍥炲...");
+        const assistant = this.addLoadingMessage("正在生成回复...");
         let fullResponse = "";
 
         const response = await fetch(`${this.apiBaseUrl}/chat_stream`, {
@@ -1054,9 +1054,9 @@
                         this.updateAssistantMessage(assistant, fullResponse, { markdown: false });
                     } else if (payload.type === "done") {
                         assistant.remove();
-                        this.addMessage("assistant", fullResponse || "娌℃湁杩斿洖缁撴灉");
+                        this.addMessage("assistant", fullResponse || "没有返回结果");
                     } else if (payload.type === "error") {
-                        throw new Error(payload.message || "娴佸紡瀵硅瘽澶辫触");
+                        throw new Error(payload.message || "流式对话失败");
                     }
                 }
             }
@@ -1082,7 +1082,7 @@
                 await this.sendQuickMessage(message);
             }
         } catch (error) {
-            this.showNotification(`鍙戦€佸け璐? ${error.message}`, "error");
+            this.showNotification(`发送失败: ${error.message}`, "error");
         } finally {
             this.isStreaming = false;
             this.updateUI();

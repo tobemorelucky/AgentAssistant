@@ -90,6 +90,15 @@ def extract_disk_tool_name(step: str) -> str | None:
     return None
 
 
+def extract_disk_tools_from_steps(steps: list[Any]) -> list[str]:
+    tools: list[str] = []
+    for step in steps or []:
+        tool_name = extract_disk_tool_name(str(step))
+        if tool_name:
+            tools.append(tool_name)
+    return tools
+
+
 def unwrap_structured_payload(value: Any) -> Any:
     """Unwrap MCP/LangChain text blocks and JSON strings into Python objects."""
     if value is None:
@@ -569,7 +578,8 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
     remote_realtime_mode = _is_remote_realtime_mode(evidence)
 
     disk_usage = evidence.get("get_disk_usage", {})
-    directories = list(evidence.get("list_large_directories", {}).get("directories", []))
+    directories_result = evidence.get("list_large_directories", {})
+    directories = list(directories_result.get("directories", []))
     files_result = evidence.get("list_large_files", {})
     deleted_result = evidence.get("query_deleted_open_files", {})
     docker_usage = evidence.get("query_docker_disk_usage", {})
@@ -586,11 +596,14 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
     total_gb = _format_number(disk_usage.get("total_gb"), "GB")
     available_gb = _format_number(disk_usage.get("available_gb"), "GB")
 
-    top_directories = _evidence_list_lines(
-        directories[:5],
-        lambda item: f"- `{item.get('path')}`: {_format_number(item.get('size_gb'), 'GB')}，原因：{item.get('reason') or '该字段未返回'}",
-        "- 未返回目录占用结果。",
-    )
+    if directories_result.get("ok") is False:
+        top_directories = f"- 工具调用失败：{directories_result.get('message') or '该字段未返回'}"
+    else:
+        top_directories = _evidence_list_lines(
+            directories[:5],
+            lambda item: f"- `{item.get('path')}`: {_format_number(item.get('size_gb'), 'GB')}，原因：{item.get('reason') or '该字段未返回'}",
+            "- 未返回目录占用结果。",
+        )
 
     if files_result.get("ok") is False:
         top_files = f"- 工具调用失败：{files_result.get('message') or '该字段未返回'}"
@@ -637,15 +650,18 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
             deleted_lines.append(f"过滤策略：{', '.join(str(item) for item in filters_applied[:5])}")
         deleted_files_text = "\n".join(deleted_lines)
 
-    docker_text = "\n".join(
-        [
-            f"- Docker 总占用：{_format_number(docker_usage.get('total_gb'), 'GB')}",
-            f"- images：{_format_number(docker_usage.get('images_gb'), 'GB')}",
-            f"- containers：{_format_number(docker_usage.get('containers_gb'), 'GB')}",
-            f"- volumes：{_format_number(docker_usage.get('volumes_gb'), 'GB')}",
-            f"- build cache：{_format_number(docker_usage.get('build_cache_gb'), 'GB')}",
-        ]
-    )
+    if docker_usage.get("ok") is False:
+        docker_text = f"- 工具调用失败：{docker_usage.get('message') or '该字段未返回'}"
+    else:
+        docker_text = "\n".join(
+            [
+                f"- Docker 总占用：{_format_number(docker_usage.get('total_gb'), 'GB')}",
+                f"- images：{_format_number(docker_usage.get('images_gb'), 'GB')}",
+                f"- containers：{_format_number(docker_usage.get('containers_gb'), 'GB')}",
+                f"- volumes：{_format_number(docker_usage.get('volumes_gb'), 'GB')}",
+                f"- build cache：{_format_number(docker_usage.get('build_cache_gb'), 'GB')}",
+            ]
+        )
 
     safe_text = _evidence_list_lines(
         list(cleanup_candidates.get("safe", [])),
@@ -671,7 +687,9 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
     else:
         root_cause_lines.append("- 未返回磁盘使用率，当前无法量化总体磁盘压力。")
 
-    if directories:
+    if directories_result.get("ok") is False:
+        root_cause_lines.append(f"- 目录占用工具调用失败：{directories_result.get('message') or '该字段未返回'}。")
+    elif directories:
         leading_dirs = "、".join(
             f"`{item.get('path')}`（{_format_number(item.get('size_gb'), 'GB')}）"
             for item in directories[:3]
@@ -701,7 +719,9 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
     else:
         root_cause_lines.append("- 在当前过滤策略下，未发现高价值 deleted open files 证据。")
 
-    if docker_usage:
+    if docker_usage.get("ok") is False:
+        root_cause_lines.append(f"- Docker 占用工具调用失败：{docker_usage.get('message') or '该字段未返回'}。")
+    elif docker_usage:
         root_cause_lines.append(
             f"- Docker 总占用约 {_format_number(docker_usage.get('total_gb'), 'GB')}，其中 build cache 约 {_format_number(docker_usage.get('build_cache_gb'), 'GB')}。"
         )
@@ -711,7 +731,9 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
     key_evidence_lines: list[str] = []
     key_evidence_lines.append(f"- 磁盘使用率：**{usage_percent}**")
 
-    if directories:
+    if directories_result.get("ok") is False:
+        key_evidence_lines.append(f"- 目录占用工具失败：{directories_result.get('error_code') or 'tool_error'}")
+    elif directories:
         for item in directories[:2]:
             key_evidence_lines.append(f"- 目录 `{item.get('path')}`：**{_format_number(item.get('size_gb'), 'GB')}**")
     else:
@@ -732,7 +754,10 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
             f"- deleted open files 过滤噪声条数：**{deleted_result.get('filtered_out_count')}**"
         )
 
-    key_evidence_lines.append(f"- Docker build cache：**{_format_number(docker_usage.get('build_cache_gb'), 'GB')}**")
+    if docker_usage.get("ok") is False:
+        key_evidence_lines.append(f"- Docker 占用工具失败：{docker_usage.get('error_code') or 'tool_error'}")
+    else:
+        key_evidence_lines.append(f"- Docker build cache：**{_format_number(docker_usage.get('build_cache_gb'), 'GB')}**")
 
     report = dedent(
         f"""
@@ -804,7 +829,8 @@ def build_disk_verifier_findings(report: str, past_steps: list[tuple[str, str]])
     source = _primary_evidence_source(evidence)
     files_result = evidence.get("list_large_files", {})
     deleted_result = evidence.get("query_deleted_open_files", {})
-    directories = list(evidence.get("list_large_directories", {}).get("directories", []))
+    directories_result = evidence.get("list_large_directories", {})
+    directories = list(directories_result.get("directories", []))
     files = list(files_result.get("files", []))
     docker = evidence.get("query_docker_disk_usage", {})
     cleanup = {} if _is_remote_realtime_mode(evidence) else evidence.get("get_disk_cleanup_candidates", {})
@@ -832,13 +858,17 @@ def build_disk_verifier_findings(report: str, past_steps: list[tuple[str, str]])
         missing.append("磁盘使用率")
         suggested.append("补充 get_disk_usage 返回的 usage_percent。")
 
-    if directories and len(directories) >= 2:
+    if directories_result.get("ok") is False:
+        if "目录占用工具调用失败" not in report and "工具调用失败" not in report:
+            findings.append("目录占用工具失败时，报告没有明确说明失败原因。")
+            suggested.append("在 Top 目录占用段落中保留目录工具失败信息。")
+    elif directories and len(directories) >= 2:
         mentioned_dirs = sum(1 for item in directories[:2] if item.get("path") and str(item["path"]) in report)
         if mentioned_dirs < 2:
             findings.append("报告没有覆盖至少 2 个 Top 目录证据。")
             missing.append("Top 目录")
             suggested.append("把 list_large_directories 的前 2 个目录写入报告。")
-    else:
+    elif "未返回目录占用结果" not in report and "无法进一步定位目录级压力来源" not in report:
         findings.append("目录证据不足，至少需要 2 个 Top 目录。")
         missing.append("Top 目录")
         suggested.append("补充 list_large_directories 结果后再生成报告。")
@@ -856,7 +886,11 @@ def build_disk_verifier_findings(report: str, past_steps: list[tuple[str, str]])
 
     build_cache = docker.get("build_cache_gb")
     images_gb = docker.get("images_gb")
-    if build_cache is None and images_gb is None:
+    if docker.get("ok") is False:
+        if "Docker 占用工具调用失败" not in report and "工具调用失败" not in report:
+            findings.append("Docker 工具失败时，报告没有明确说明失败原因。")
+            suggested.append("在 Docker 占用情况段落中保留 Docker 工具失败信息。")
+    elif build_cache is None and images_gb is None:
         findings.append("Docker 占用没有具体 GB 数值。")
         missing.append("Docker 占用")
         suggested.append("补充 query_docker_disk_usage 的结构化返回。")

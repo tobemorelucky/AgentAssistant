@@ -20,6 +20,8 @@ class SkillDefinition:
 
     name: str
     description: str
+    skill_mode: str = "reference_playbook"
+    profile_id: str | None = None
     tools: list[str] = field(default_factory=list)
     risk_level: str = "low_risk"
     trigger: dict[str, list[str]] = field(default_factory=dict)
@@ -39,6 +41,8 @@ class SkillDefinition:
         return (
             f"Skill: {self.name}\n"
             f"Description: {self.description}\n"
+            f"Skill mode: {self.skill_mode}\n"
+            f"Profile id: {self.profile_id or 'none'}\n"
             f"Risk level: {self.risk_level}\n"
             f"Tools: {tools}\n"
             f"Steps:\n{steps}\n"
@@ -62,9 +66,16 @@ def _split_front_matter(content: str) -> tuple[dict[str, Any], str]:
 def _build_skill(skill_path: Path, draft: bool) -> SkillDefinition:
     raw = skill_path.read_text(encoding="utf-8")
     front_matter, body = _split_front_matter(raw)
+    skill_mode = front_matter.get("skill_mode")
+    if draft:
+        skill_mode = skill_mode or "draft"
+    else:
+        skill_mode = skill_mode or "reference_playbook"
     return SkillDefinition(
         name=front_matter.get("name", skill_path.parent.name),
         description=front_matter.get("description", ""),
+        skill_mode=skill_mode,
+        profile_id=front_matter.get("profile_id"),
         tools=list(front_matter.get("tools", []) or []),
         risk_level=front_matter.get("risk_level", "low_risk"),
         trigger=dict(front_matter.get("trigger", {}) or {}),

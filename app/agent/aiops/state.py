@@ -12,6 +12,13 @@ class PlanExecuteState(TypedDict, total=False):
     session_id: str
     input: str
     mode: str
+    diagnosis_intent: str
+    selected_profile: dict[str, Any] | None
+    evidence_store: dict[str, Any]
+    investigation_round: int
+    no_progress_rounds: int
+    last_investigation_slot: str | None
+    stop_decision: dict[str, Any] | None
     plan_source: str
     entry_node: str
     status: str

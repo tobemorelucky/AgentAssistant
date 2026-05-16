@@ -7,15 +7,26 @@ from typing import Any
 
 from loguru import logger
 
+from app.agent.aiops.investigation import (
+    build_evidence_store,
+    infer_diagnosis_intent,
+    resolve_selected_profile,
+)
 from app.agent.aiops.skill_loader import SkillDefinition, load_skills
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
 
 
+def _model_to_dict(model: Any) -> dict[str, Any]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
+
 INTENT_PATTERNS = {
-    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "cpu过高", "CPU告警"],
-    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "OOM"],
-    "log_analysis": [r"\blog\b", "日志", "error", "异常日志"],
+    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "cpu告警", "cpu异常"],
+    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "oom"],
+    "log_analysis": [r"\blog\b", "日志", "error", "错误日志"],
     "disk_diagnosis": [
         r"\bdisk\b",
         "disk usage",
@@ -85,6 +96,8 @@ def match_skills(input_text: str, limit: int = 3) -> list[dict[str, Any]]:
     """Return top matched skills with routing metadata."""
     matches: list[dict[str, Any]] = []
     for skill in load_skills():
+        if skill.skill_mode == "draft":
+            continue
         score, reasons = score_skill(input_text, skill)
         if score <= 0:
             continue
@@ -92,6 +105,8 @@ def match_skills(input_text: str, limit: int = 3) -> list[dict[str, Any]]:
             {
                 "name": skill.name,
                 "description": skill.description,
+                "skill_mode": skill.skill_mode,
+                "profile_id": skill.profile_id,
                 "tools": skill.tools,
                 "risk_level": skill.risk_level,
                 "steps": skill.steps,
@@ -110,8 +125,19 @@ def match_skills(input_text: str, limit: int = 3) -> list[dict[str, Any]]:
 async def skill_router(state: PlanExecuteState) -> dict[str, Any]:
     """LangGraph node: route matching skills for the task."""
     input_text = state.get("input", "")
+    mode = state.get("mode", "default")
     matched_skills = match_skills(input_text, limit=3)
-    logger.info(f"Skill Router matched {len(matched_skills)} skills")
+    diagnosis_intent = infer_diagnosis_intent(
+        mode=mode,
+        input_text=input_text,
+        matched_skills=matched_skills,
+    )
+    selected_profile = resolve_selected_profile(mode=mode, matched_skills=matched_skills)
+    logger.info(
+        "Skill Router matched {} skills, selected_profile={}",
+        len(matched_skills),
+        selected_profile.profile_id if selected_profile else "none",
+    )
 
     trace_event = create_trace_event(
         session_id=state.get("session_id", "default"),
@@ -121,10 +147,16 @@ async def skill_router(state: PlanExecuteState) -> dict[str, Any]:
         result_summary=", ".join(skill["name"] for skill in matched_skills) or "No skills matched",
         metadata={
             "matched_skills": [skill["name"] for skill in matched_skills],
+            "skill_modes": {skill["name"]: skill["skill_mode"] for skill in matched_skills},
+            "selected_profile": selected_profile.profile_id if selected_profile else None,
+            "diagnosis_intent": diagnosis_intent.value,
         },
     )
 
     return {
         "matched_skills": matched_skills,
+        "diagnosis_intent": diagnosis_intent.value,
+        "selected_profile": _model_to_dict(selected_profile) if selected_profile else None,
+        "evidence_store": build_evidence_store(selected_profile),
         "trace_events": [trace_event],
     }

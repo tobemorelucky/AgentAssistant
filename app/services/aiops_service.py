@@ -131,7 +131,18 @@ class AIOpsService:
     @staticmethod
     def _after_verifier(state: PlanExecuteState) -> str:
         verifier_result = state.get("verifier_result", {})
-        if verifier_result and not verifier_result.get("passed", True) and state.get("plan"):
+        selected_profile = state.get("selected_profile") or {}
+        stop_decision = state.get("stop_decision") or {}
+        if (
+            verifier_result
+            and not verifier_result.get("passed", True)
+            and selected_profile.get("profile_id") == "disk_pressure_profile"
+            and stop_decision.get("decision") in {"finalize", "finalize_with_limitations"}
+        ):
+            return END
+        if verifier_result and not verifier_result.get("passed", True) and (
+            state.get("plan") or selected_profile.get("profile_id") == "disk_pressure_profile"
+        ):
             return NODE_REPLANNER
         return END
 
@@ -297,6 +308,13 @@ class AIOpsService:
             "session_id": session_id,
             "input": user_input,
             "mode": mode,
+            "diagnosis_intent": "",
+            "selected_profile": None,
+            "evidence_store": {},
+            "investigation_round": 0,
+            "no_progress_rounds": 0,
+            "last_investigation_slot": None,
+            "stop_decision": None,
             "plan_source": "",
             "entry_node": NODE_SKILL_ROUTER,
             "status": "running",

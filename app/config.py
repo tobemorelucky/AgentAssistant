@@ -59,6 +59,7 @@ class Settings(BaseSettings):
 
     # 文档分块配置
     aiops_max_steps: int = 8
+    aiops_allow_legacy_generic_diagnosis: bool = False
     web_search_enabled: bool = False
     tavily_api_key: str = ""
     web_search_max_results: int = 5

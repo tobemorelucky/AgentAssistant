@@ -19,6 +19,10 @@ from app.agent.aiops.disk_cleanup import (
     normalize_disk_tool_result,
     summarize_disk_tool_result,
 )
+from app.agent.aiops.investigation import (
+    is_disk_pressure_profile,
+    update_disk_evidence_store,
+)
 from app.agent.aiops.patrol import (
     parse_tool_plan_step,
     parse_tool_results_from_history,
@@ -94,6 +98,147 @@ def _build_generic_template_note(task_label: str, state: PlanExecuteState) -> st
         "已整理当前证据并准备生成结论与建议。"
         f"参考摘要：{snippet_text} 当前流程仅进行了资料检索与分析，未执行任何危险操作。"
     )
+
+
+def _parse_investigation_task(step_payload: Any) -> dict[str, Any] | None:
+    if not isinstance(step_payload, dict):
+        return None
+    if not {"slot", "tool", "args", "required", "reason"} <= set(step_payload):
+        return None
+    return {
+        "slot": str(step_payload.get("slot") or ""),
+        "tool": str(step_payload.get("tool") or ""),
+        "args": dict(step_payload.get("args") or {}),
+        "required": bool(step_payload.get("required", True)),
+        "reason": str(step_payload.get("reason") or ""),
+    }
+
+
+async def _execute_investigation_task(
+    state: PlanExecuteState,
+    *,
+    task: dict[str, Any],
+    remaining_plan: list[Any],
+    tool_map: dict[str, Any],
+) -> dict[str, Any]:
+    session_id = state.get("session_id", "default")
+    tool_name = task["tool"]
+    slot = task["slot"]
+    args = task["args"]
+    task_label = task.get("reason") or f"Collect {slot} with {tool_name}"
+    decision = check_tool_policy(tool_name)
+
+    if decision["decision"] == "reject":
+        raw_result = {"error": decision["reason"], "tool": tool_name, "args": args}
+        evidence_store = update_disk_evidence_store(
+            dict(state.get("evidence_store") or {}),
+            slot=slot,
+            tool_name=tool_name,
+            raw_result=raw_result,
+        )
+        return {
+            "plan": remaining_plan,
+            "status": "running",
+            "past_steps": [(task_label, _to_result_text(raw_result))],
+            "evidence_store": evidence_store,
+            "last_investigation_slot": slot,
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="tool_call",
+                    status="error",
+                    title="Investigation tool rejected",
+                    tool_name=tool_name,
+                    tool_args=args,
+                    result_summary=decision["reason"],
+                    metadata={"slot": slot, "execution_mode": "investigation"},
+                )
+            ],
+        }
+
+    if decision["decision"] == "approval_required":
+        action_id = str(uuid.uuid4())
+        action = {
+            "action_id": action_id,
+            "step": task_label,
+            "tool_name": tool_name,
+            "tool_args_summary": summarize_result(args),
+            "tool_calls": [{"name": tool_name, "args": args}],
+            "reason": decision["reason"],
+            "status": "pending",
+            "created_at": _now_iso(),
+        }
+        return {
+            "pending_action": action,
+            "status": "paused",
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="approval",
+                    status="pending",
+                    title="Dangerous investigation tool requires approval",
+                    tool_name=tool_name,
+                    tool_args=args,
+                    result_summary=decision["reason"],
+                    metadata={"slot": slot, "action_id": action_id, "execution_mode": "investigation"},
+                )
+            ],
+        }
+
+    tool = tool_map.get(tool_name)
+    started_at = _now_iso()
+    started_ts = time.perf_counter()
+    status = "success"
+    if tool is None:
+        raw_result = {"error": f"Tool not found: {tool_name}", "tool": tool_name, "args": args}
+        status = "error"
+    else:
+        try:
+            raw_result = await invoke_tool(tool, args)
+        except Exception as exc:
+            raw_result = {"error": str(exc), "tool": tool_name, "args": args}
+            status = "error"
+    duration_ms = int((time.perf_counter() - started_ts) * 1000)
+    ended_at = _now_iso()
+    normalized_result = normalize_disk_tool_result(tool_name, raw_result)
+    evidence_store = update_disk_evidence_store(
+        dict(state.get("evidence_store") or {}),
+        slot=slot,
+        tool_name=tool_name,
+        raw_result=raw_result,
+    )
+    result_summary = summarize_disk_tool_result(tool_name, normalized_result)
+    return {
+        "plan": remaining_plan,
+        "status": "running",
+        "past_steps": [(task_label, _to_result_text(normalized_result))],
+        "tools_used": [tool_name],
+        "evidence_store": evidence_store,
+        "last_investigation_slot": slot,
+        "trace_events": [
+            create_trace_event(
+                session_id=session_id,
+                node="tool_call",
+                status=status,
+                title=f"Executed {tool_name}",
+                tool_name=tool_name,
+                tool_args=args,
+                result_summary=result_summary,
+                started_at=started_at,
+                ended_at=ended_at,
+                duration_ms=duration_ms,
+                metadata={"slot": slot, "level": decision["level"], "execution_mode": "investigation"},
+            ),
+            create_trace_event(
+                session_id=session_id,
+                node="executor",
+                status=status,
+                title="Investigation task executed",
+                result_summary=result_summary,
+                metadata={"slot": slot},
+            ),
+        ],
+    }
 
 
 async def _execute_generic_template_step(
@@ -416,6 +561,15 @@ async def executor(state: PlanExecuteState) -> dict[str, Any]:
         return await _execute_generic_template_step(
             state,
             task_label=task_label,
+            remaining_plan=remaining_plan,
+            tool_map=tool_map,
+        )
+
+    investigation_task = _parse_investigation_task(current_step)
+    if investigation_task is not None and is_disk_pressure_profile(state.get("selected_profile")):
+        return await _execute_investigation_task(
+            state,
+            task=investigation_task,
             remaining_plan=remaining_plan,
             tool_map=tool_map,
         )

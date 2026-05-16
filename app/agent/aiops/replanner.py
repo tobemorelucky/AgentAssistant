@@ -14,6 +14,15 @@ from app.agent.aiops.disk_cleanup import (
     extract_disk_tools_from_steps,
     is_disk_cleanup_request,
 )
+from app.agent.aiops.investigation import StopDecision, StopDecisionType
+from app.agent.aiops.investigation import (
+    build_disk_investigation_report,
+    build_follow_up_tasks,
+    compute_no_progress_rounds,
+    decide_disk_stop,
+    is_disk_pressure_profile,
+    summarize_evidence_store,
+)
 from app.agent.aiops.patrol import (
     build_alert_report,
     collect_evidence_gaps,
@@ -27,6 +36,20 @@ from app.agent.aiops.utils import format_tools_description, unwrap_tool_result
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
 from app.core.llm_factory import llm_factory
+
+
+LEGACY_GENERIC_PLAN_SOURCES = {
+    "generic_llm",
+    "generic_template_fallback",
+    "controlled_no_profile",
+    "legacy_generic_disabled",
+}
+
+
+def _model_to_dict(model: object) -> dict[str, object]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
 
 
 class Response(BaseModel):
@@ -186,6 +209,135 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
     target_alert = state.get("target_alert")
     matched_skills = state.get("matched_skills", [])
     plan_source = state.get("plan_source", "")
+
+    if verifier_result and not verifier_result.get("passed", True) and plan_source in LEGACY_GENERIC_PLAN_SOURCES:
+        response = state.get("response", "")
+        if not response and plan_source == "generic_template_fallback":
+            response = _build_generic_template_report(state)
+        return {
+            "response": response,
+            "plan": [],
+            "stop_decision": _model_to_dict(
+                StopDecision(
+                    decision=StopDecisionType.FINALIZE_WITH_LIMITATIONS,
+                    reason="Legacy generic diagnosis stops instead of refilling free-text plans.",
+                    missing_slots=list(verifier_result.get("missing_evidence", [])),
+                )
+            ),
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="warning",
+                    title="Legacy generic diagnosis finalized with limitations",
+                    result_summary="Verifier feedback will not be converted into a new free-text plan",
+                )
+            ],
+        }
+
+    if is_disk_pressure_profile(state.get("selected_profile")):
+        previous_no_progress = int(state.get("no_progress_rounds") or 0)
+        last_slot = state.get("last_investigation_slot")
+        no_progress_rounds = compute_no_progress_rounds(
+            dict(state.get("evidence_store") or {}),
+            previous_no_progress_rounds=previous_no_progress,
+            last_slot=last_slot if isinstance(last_slot, str) else None,
+        )
+        state_for_disk = dict(state)
+        state_for_disk["no_progress_rounds"] = no_progress_rounds
+        stop_decision = decide_disk_stop(state_for_disk)
+
+        if plan:
+            return {
+                "no_progress_rounds": no_progress_rounds,
+                "trace_events": [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="replanner",
+                        status="success",
+                        title="Disk pressure investigation continues",
+                        result_summary=summarize_evidence_store(dict(state.get("evidence_store") or {})),
+                    )
+                ],
+            }
+
+        if verifier_result and not verifier_result.get("passed", True):
+            next_tasks = build_follow_up_tasks(state_for_disk)
+            if next_tasks and stop_decision.decision != StopDecisionType.FINALIZE_WITH_LIMITATIONS:
+                return {
+                    "plan": next_tasks,
+                    "response": "",
+                    "investigation_round": int(state.get("investigation_round") or 0) + 1,
+                    "no_progress_rounds": no_progress_rounds,
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="warning",
+                            title="Disk investigation requested follow-up evidence",
+                            result_summary=" | ".join(task["tool"] for task in next_tasks),
+                            metadata={"missing_slots": verifier_result.get("missing_evidence", [])},
+                        )
+                    ],
+                }
+
+            response = state.get("response", "") or build_disk_investigation_report(state_for_disk)
+            if stop_decision.decision == StopDecisionType.CONTINUE:
+                stop_decision = StopDecision(
+                    decision=StopDecisionType.FINALIZE_WITH_LIMITATIONS,
+                    reason="Disk investigation produced no new follow-up evidence tasks.",
+                    missing_slots=list(verifier_result.get("missing_evidence", [])),
+                )
+            return {
+                "response": response,
+                "plan": [],
+                "no_progress_rounds": no_progress_rounds,
+                "stop_decision": _model_to_dict(stop_decision),
+                "trace_events": [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="replanner",
+                        status="warning",
+                        title="Disk investigation finalized with evidence limits",
+                        result_summary=stop_decision.reason,
+                    )
+                ],
+            }
+
+        next_tasks = build_follow_up_tasks(state_for_disk)
+        if next_tasks and stop_decision.decision != StopDecisionType.FINALIZE_WITH_LIMITATIONS:
+            return {
+                "plan": next_tasks,
+                "response": "",
+                "investigation_round": int(state.get("investigation_round") or 0) + 1,
+                "no_progress_rounds": no_progress_rounds,
+                "trace_events": [
+                    create_trace_event(
+                        session_id=session_id,
+                        node="replanner",
+                        status="success",
+                        title="Disk investigation planned follow-up evidence",
+                        result_summary=" | ".join(task["tool"] for task in next_tasks),
+                    )
+                ],
+            }
+
+        response = build_disk_investigation_report(state_for_disk)
+        return {
+            "response": response,
+            "plan": [],
+            "no_progress_rounds": no_progress_rounds,
+            "stop_decision": _model_to_dict(stop_decision),
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="success",
+                    title="Disk pressure investigation report drafted",
+                    result_summary=summarize_evidence_store(dict(state.get("evidence_store") or {})),
+                )
+            ],
+        }
 
     if is_disk_cleanup_request(input_text, matched_skills):
         if verifier_result and not verifier_result.get("passed", True) and plan:

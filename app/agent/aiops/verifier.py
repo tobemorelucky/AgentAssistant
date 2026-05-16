@@ -6,6 +6,8 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.aiops.disk_cleanup import build_disk_verifier_findings, is_disk_cleanup_request
+from app.agent.aiops.investigation import StopDecision, StopDecisionType
+from app.agent.aiops.investigation import is_disk_pressure_profile, verify_disk_investigation_report
 from app.agent.aiops.patrol import build_patrol_verifier_findings
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.trace import create_trace_event
@@ -20,6 +22,12 @@ except Exception:  # pragma: no cover
     ChatQwen = None
 
 
+def _model_to_dict(model: object) -> dict[str, object]:
+    if hasattr(model, "model_dump"):
+        return model.model_dump()
+    return model.dict()
+
+
 class VerifierOutput(BaseModel):
     """Verifier structured output."""
 
@@ -28,6 +36,17 @@ class VerifierOutput(BaseModel):
     suggested_next_steps: list[str] = Field(default_factory=list)
     missing_evidence: list[str] = Field(default_factory=list)
     risk_warnings: list[str] = Field(default_factory=list)
+
+
+def _disk_investigation_verify(state: PlanExecuteState) -> VerifierOutput:
+    findings, missing, warnings = verify_disk_investigation_report(state)
+    return VerifierOutput(
+        passed=not findings,
+        findings=findings,
+        suggested_next_steps=[],
+        missing_evidence=missing,
+        risk_warnings=warnings,
+    )
 
 
 def _disk_verify(state: PlanExecuteState) -> VerifierOutput:
@@ -135,6 +154,16 @@ def _generic_template_verify(state: PlanExecuteState) -> VerifierOutput:
     )
 
 
+def _should_finalize_legacy_generic(state: PlanExecuteState) -> bool:
+    plan_source = state.get("plan_source", "")
+    return plan_source in {
+        "generic_llm",
+        "generic_template_fallback",
+        "controlled_no_profile",
+        "legacy_generic_disabled",
+    }
+
+
 async def verifier(state: PlanExecuteState) -> dict[str, object]:
     """LangGraph node: verify whether the report is evidence-backed."""
     logger.info("=== Verifier ===")
@@ -143,8 +172,18 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
     past_steps = state.get("past_steps", [])
 
     result: VerifierOutput
-    if is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
+    if is_disk_pressure_profile(state.get("selected_profile")):
+        result = _disk_investigation_verify(state)
+    elif is_disk_cleanup_request(state.get("input", ""), state.get("matched_skills", [])):
         result = _disk_verify(state)
+    elif state.get("plan_source") == "controlled_no_profile":
+        result = VerifierOutput(
+            passed=True,
+            findings=[],
+            suggested_next_steps=[],
+            missing_evidence=["execution_profile"],
+            risk_warnings=["controlled_stop_before_legacy_generic_chain"],
+        )
     elif state.get("plan_source") == "generic_template_fallback":
         result = _generic_template_verify(state)
     elif state.get("target_alert"):
@@ -186,7 +225,7 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
     else:
         result = _heuristic_verify(state)
 
-    verifier_result = result.model_dump()
+    verifier_result = _model_to_dict(result)
     if not verifier_result["passed"]:
         trace_event = create_trace_event(
             session_id=session_id,
@@ -196,7 +235,19 @@ async def verifier(state: PlanExecuteState) -> dict[str, object]:
             result_summary="; ".join(verifier_result["findings"]),
             metadata=verifier_result,
         )
-        if state.get("plan_source") == "generic_template_fallback":
+        if _should_finalize_legacy_generic(state):
+            return {
+                "verifier_result": verifier_result,
+                "stop_decision": _model_to_dict(
+                    StopDecision(
+                        decision=StopDecisionType.FINALIZE_WITH_LIMITATIONS,
+                        reason="Legacy generic diagnosis is not allowed to refill free-text plans.",
+                        missing_slots=list(verifier_result.get("missing_evidence", [])),
+                    )
+                ),
+                "trace_events": [trace_event],
+            }
+        if is_disk_pressure_profile(state.get("selected_profile")):
             return {
                 "verifier_result": verifier_result,
                 "trace_events": [trace_event],

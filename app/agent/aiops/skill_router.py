@@ -24,8 +24,8 @@ def _model_to_dict(model: Any) -> dict[str, Any]:
 
 
 INTENT_PATTERNS = {
-    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "cpu告警", "cpu异常"],
-    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "oom"],
+    "cpu_diagnosis": [r"\bcpu\b", "high cpu", "cpu usage", "cpu高", "cpu占用", "cpu 情况"],
+    "memory_diagnosis": [r"\bmemory\b", r"\boom\b", "high memory", "内存", "内存满", "memory status", "oom"],
     "log_analysis": [r"\blog\b", "日志", "error", "错误日志"],
     "disk_diagnosis": [
         r"\bdisk\b",

@@ -20,10 +20,14 @@ from datetime import datetime, timedelta
 from fastmcp import FastMCP
 
 from app.monitoring.monitor_provider import (
+    get_cpu_summary_data,
     get_disk_usage_data,
+    get_memory_summary_data,
     get_monitor_provider_name,
     list_large_files_data,
     list_large_directories_data,
+    list_top_cpu_processes_data,
+    list_top_memory_processes_data,
     query_deleted_open_files_data,
     query_docker_disk_usage_data,
 )
@@ -647,6 +651,36 @@ def query_deleted_open_files() -> Dict[str, Any]:
 def query_docker_disk_usage() -> Dict[str, Any]:
     """Return Docker disk usage from the configured monitor provider."""
     return query_docker_disk_usage_data()
+
+
+@mcp.tool()
+@log_tool_call
+def get_memory_summary() -> Dict[str, Any]:
+    """Return current memory summary from the configured monitor provider."""
+    return get_memory_summary_data()
+
+
+@mcp.tool()
+@log_tool_call
+def list_top_memory_processes(limit: int = 10) -> Dict[str, Any]:
+    """Return top memory-consuming processes from the configured monitor provider."""
+    normalized_limit = max(1, min(int(limit or 10), 50))
+    return list_top_memory_processes_data(limit=normalized_limit)
+
+
+@mcp.tool()
+@log_tool_call
+def get_cpu_summary() -> Dict[str, Any]:
+    """Return current CPU summary from the configured monitor provider."""
+    return get_cpu_summary_data()
+
+
+@mcp.tool()
+@log_tool_call
+def list_top_cpu_processes(limit: int = 10) -> Dict[str, Any]:
+    """Return top CPU-consuming processes from the configured monitor provider."""
+    normalized_limit = max(1, min(int(limit or 10), 50))
+    return list_top_cpu_processes_data(limit=normalized_limit)
 
 
 @mcp.tool()

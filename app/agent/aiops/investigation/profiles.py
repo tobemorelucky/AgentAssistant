@@ -18,10 +18,10 @@ PATROL_DISPATCH_PROFILE = DiagnosisProfile(
         "max_attempts_per_slot": 1,
     },
     report_schema=[
-        "巡检结果",
-        "目标告警",
-        "分发决策",
-        "后续说明",
+        "巡检摘要",
+        "活跃告警",
+        "分发结果",
+        "后续建议",
     ],
 )
 
@@ -56,14 +56,76 @@ DISK_PRESSURE_PROFILE = DiagnosisProfile(
     ],
 )
 
+MEMORY_PRESSURE_PROFILE = DiagnosisProfile(
+    profile_id="memory_pressure_profile",
+    supported_intents=[
+        DiagnosisIntent.STATUS_QUERY,
+        DiagnosisIntent.INCIDENT_DIAGNOSIS,
+        DiagnosisIntent.REMEDIATION_REQUEST,
+    ],
+    resource_type="memory",
+    required_evidence_slots=["memory_summary", "top_memory_processes"],
+    conditional_evidence_slots=["memory_runbook"],
+    reference_evidence_slots=["memory_runbook"],
+    stop_rules={
+        "max_rounds": 3,
+        "max_no_progress_rounds": 1,
+        "max_attempts_per_slot": 2,
+    },
+    report_schema=[
+        "任务与对象",
+        "已确认事实",
+        "当前内存状态",
+        "主要内存消耗来源",
+        "候选风险 / 待验证解释",
+        "证据缺口",
+        "处理建议",
+        "风险提示",
+        "Runbook 参考",
+    ],
+)
+
+CPU_PRESSURE_PROFILE = DiagnosisProfile(
+    profile_id="cpu_pressure_profile",
+    supported_intents=[
+        DiagnosisIntent.STATUS_QUERY,
+        DiagnosisIntent.INCIDENT_DIAGNOSIS,
+        DiagnosisIntent.REMEDIATION_REQUEST,
+    ],
+    resource_type="cpu",
+    required_evidence_slots=["cpu_summary", "top_cpu_processes"],
+    conditional_evidence_slots=["cpu_runbook"],
+    reference_evidence_slots=["cpu_runbook"],
+    stop_rules={
+        "max_rounds": 3,
+        "max_no_progress_rounds": 1,
+        "max_attempts_per_slot": 2,
+    },
+    report_schema=[
+        "任务与对象",
+        "已确认事实",
+        "当前 CPU 状态",
+        "主要 CPU 消耗来源",
+        "候选风险 / 待验证解释",
+        "证据缺口",
+        "处理建议",
+        "风险提示",
+        "Runbook 参考",
+    ],
+)
+
 PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
     PATROL_DISPATCH_PROFILE.profile_id: PATROL_DISPATCH_PROFILE,
     DISK_PRESSURE_PROFILE.profile_id: DISK_PRESSURE_PROFILE,
+    MEMORY_PRESSURE_PROFILE.profile_id: MEMORY_PRESSURE_PROFILE,
+    CPU_PRESSURE_PROFILE.profile_id: CPU_PRESSURE_PROFILE,
 }
 
 EXECUTABLE_PROFILE_IDS = {
     PATROL_DISPATCH_PROFILE.profile_id,
     DISK_PRESSURE_PROFILE.profile_id,
+    MEMORY_PRESSURE_PROFILE.profile_id,
+    CPU_PRESSURE_PROFILE.profile_id,
 }
 
 
@@ -92,9 +154,9 @@ def infer_diagnosis_intent(
     normalized = (input_text or "").lower()
     remediation_tokens = (
         "怎么办",
-        "如何处理",
+        "怎么处理",
         "处理建议",
-        "修复",
+        "如何处理",
         "cleanup",
         "fix",
         "how to",
@@ -102,11 +164,15 @@ def infer_diagnosis_intent(
     status_tokens = (
         "现在",
         "当前",
-        "状态",
+        "情况如何",
         "usage",
         "status",
-        "情况如何",
-        "空间使用情况",
+        "磁盘空间",
+        "磁盘使用",
+        "cpu 情况",
+        "cpu情况",
+        "内存情况",
+        "memory status",
     )
     if any(token in normalized for token in remediation_tokens):
         return DiagnosisIntent.REMEDIATION_REQUEST

@@ -9,6 +9,7 @@ from typing import Any
 PATROL_DISPATCH_PROFILE_ID = "patrol_dispatch_profile"
 DISK_ALERT_NAMES = {"HighDiskUsage", "DiskFull"}
 CPU_ALERT_NAMES = {"HighCPUUsage"}
+MEMORY_ALERT_NAMES = {"HighMemoryUsage", "MemoryPressure"}
 
 SEVERITY_ORDER = {
     "critical": 4,
@@ -40,6 +41,10 @@ def resolve_alert_profile_id(alert: dict[str, Any] | None) -> str | None:
     alert_name = str(alert.get("alert_name") or "")
     if alert_name in DISK_ALERT_NAMES:
         return "disk_pressure_profile"
+    if alert_name in CPU_ALERT_NAMES:
+        return "cpu_pressure_profile"
+    if alert_name in MEMORY_ALERT_NAMES:
+        return "memory_pressure_profile"
     return None
 
 
@@ -49,7 +54,11 @@ def suggest_future_profile_id(alert: dict[str, Any] | None) -> str | None:
         return None
     alert_name = str(alert.get("alert_name") or "")
     if alert_name in CPU_ALERT_NAMES:
-        return "cpu_pressure_profile"
+        return None
+    if alert_name in MEMORY_ALERT_NAMES:
+        return None
+    if alert_name in DISK_ALERT_NAMES:
+        return None
     return None
 
 
@@ -59,12 +68,12 @@ def build_no_alert_patrol_report() -> str:
         """
         # AIOps 巡检报告
 
-        ## 巡检结果
+        ## 巡检结论
         - 当前未检测到活跃告警。
 
         ## 说明
-        - 本次巡检已完成活跃告警发现。
-        - 由于没有发现需要深度排查的目标告警，本次未继续进入结构化 Investigation Profile。
+        - 本次默认巡检已完成告警发现流程。
+        - 由于没有活跃告警，本轮未继续分发到深度诊断 Profile。
         """
     ).strip()
 
@@ -78,24 +87,24 @@ def build_unsupported_profile_report(alert: dict[str, Any] | None) -> str:
     future_profile = suggest_future_profile_id(alert)
 
     next_step = (
-        f"- 建议后续补充 `{future_profile}`，再将该类告警纳入统一 Investigation Engine。"
+        f"- 建议后续补充 `{future_profile}` 结构化 Profile，并迁移到统一 Investigation Engine。"
         if future_profile
-        else "- 建议后续为该类告警补充对应 execution_profile，再接入统一 Investigation Engine。"
+        else "- 建议后续补充与该告警类型对应的 execution_profile，并迁移到统一 Investigation Engine。"
     )
 
     return dedent(
         f"""
         # AIOps 巡检报告
 
-        ## 已发现活跃告警
+        ## 已发现的活跃告警
         - 服务：`{service_name}`
         - 告警：`{alert_name}`
         - 严重级别：`{severity}`
 
         ## 当前处理结果
+        - 已完成告警发现与目标告警选择。
         - 当前尚未实现该告警类型对应的结构化 Investigation Profile。
-        - 本次巡检已停止进入深度自主排查链路。
-        - 为避免产生无证据推断，系统没有回退到旧的 patrol 深诊断模板链。
+        - 为避免进入不受控的旧式深度自主排查链路，本次未继续执行深诊断。
 
         ## 后续建议
         {next_step}

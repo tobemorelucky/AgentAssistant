@@ -1,4 +1,5 @@
 import sys
+import types
 from importlib.util import module_from_spec, spec_from_file_location
 from pathlib import Path
 
@@ -18,6 +19,16 @@ def _load_module(module_name: str, path: Path):
     sys.modules[module_name] = module
     spec.loader.exec_module(module)
     return module
+
+
+sys.modules.setdefault("app", types.ModuleType("app"))
+sys.modules["app"].__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("app.agent", types.ModuleType("app.agent"))
+sys.modules["app.agent"].__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("app.agent.aiops", types.ModuleType("app.agent.aiops"))
+sys.modules["app.agent.aiops"].__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("app.agent.aiops.investigation", types.ModuleType("app.agent.aiops.investigation"))
+sys.modules["app.agent.aiops.investigation"].__path__ = []  # type: ignore[attr-defined]
 
 
 models = _load_module("app.agent.aiops.investigation.models", MODELS_PATH)

@@ -93,8 +93,13 @@ def test_infer_intents_matches_cpu_and_logs():
 
 
 def test_infer_intents_matches_disk_cleanup():
-    intents = skill_router.infer_intents("服务器磁盘使用率过高，怀疑硬盘满了，请给出清理建议")
+    intents = skill_router.infer_intents("请检查服务器当前磁盘空间使用情况，并分析主要占用来源。")
     assert "disk_diagnosis" in intents
+
+
+def test_infer_intents_matches_memory_pressure():
+    intents = skill_router.infer_intents("系统现在内存情况如何？")
+    assert "memory_diagnosis" in intents
 
 
 def test_score_skill_prefers_service_and_alert_matches():

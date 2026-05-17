@@ -202,3 +202,151 @@ def test_remote_host_large_files_structured_error_is_non_fatal(monkeypatch):
     assert result["ok"] is False
     assert result["source"] == "remote_host"
     assert result["error_code"] == "scan_failed"
+
+
+def test_mock_memory_summary_works():
+    monitor_provider.config.aiops_monitor_provider = "mock"
+    monitor_provider.config.aiops_remote_host_base_url = ""
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    result = monitor_provider.get_memory_summary_data()
+
+    assert result["source"] == "mock"
+    assert result["usage_percent"] == 86.3
+    assert result["host"] == "demo-server-01"
+
+
+def test_remote_host_memory_summary_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/system/memory-summary"
+        assert params is None
+        return 200, {
+            "ok": True,
+            "host": "he-VMware-Virtual-Platform",
+            "total_gb": 15.52,
+            "used_gb": 7.24,
+            "available_gb": 8.28,
+            "usage_percent": 46.7,
+            "status": "healthy",
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.get_memory_summary_data()
+
+    assert result["source"] == "remote_host"
+    assert result["usage_percent"] == 46.7
+    assert result["available_gb"] == 8.28
+
+
+def test_remote_host_top_memory_processes_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/process/top-memory"
+        assert params == {"limit": 10}
+        return 200, {
+            "ok": True,
+            "limit": 10,
+            "processes": [
+                {
+                    "pid": 123,
+                    "process_name": "python",
+                    "command": "python worker.py",
+                    "memory_percent": 22.4,
+                    "rss_mb": 1024.0,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_top_memory_processes_data(limit=10)
+
+    assert result["ok"] is True
+    assert result["source"] == "remote_host"
+    assert result["processes"][0]["process_name"] == "python"
+    assert result["processes"][0]["rss_gb"] == 1.0
+
+
+def test_remote_host_cpu_summary_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/system/cpu-summary"
+        assert params is None
+        return 200, {
+            "ok": True,
+            "host": "he-VMware-Virtual-Platform",
+            "usage_percent": 38.5,
+            "cores": 4,
+            "load_1": 0.82,
+            "load_5": 0.74,
+            "load_15": 0.65,
+            "status": "healthy",
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.get_cpu_summary_data()
+
+    assert result["source"] == "remote_host"
+    assert result["usage_percent"] == 38.5
+    assert result["load_1"] == 0.82
+
+
+def test_remote_host_top_cpu_processes_adapts_success(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/process/top-cpu"
+        assert params == {"limit": 10}
+        return 200, {
+            "ok": True,
+            "limit": 10,
+            "processes": [
+                {
+                    "pid": 889,
+                    "process_name": "java",
+                    "command": "java -jar app.jar",
+                    "cpu_percent": 41.2,
+                    "threads": 32,
+                }
+            ],
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_top_cpu_processes_data(limit=10)
+
+    assert result["ok"] is True
+    assert result["source"] == "remote_host"
+    assert result["processes"][0]["cpu_percent"] == 41.2
+    assert result["processes"][0]["threads"] == 32
+
+
+def test_remote_host_cpu_summary_structured_error_is_non_fatal(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        return 200, {"ok": False, "message": "cpu summary unavailable", "error_code": "cpu_unavailable"}
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.get_cpu_summary_data()
+
+    assert result["ok"] is False
+    assert result["source"] == "remote_host"
+    assert result["error_code"] == "cpu_unavailable"

@@ -1,6 +1,6 @@
 ---
 name: disk_cleanup
-description: 基于磁盘使用率、目录占用、大文件、Docker 占用和 deleted open files 的结构化磁盘诊断 Profile。
+description: 针对磁盘使用率过高、磁盘空间不足和清理建议场景的结构化诊断入口。
 skill_mode: execution_profile
 profile_id: disk_pressure_profile
 tools:
@@ -23,12 +23,13 @@ trigger:
     - disk full
     - no space left
     - 清理空间
+    - 清理缓存
   intents:
     - disk_diagnosis
 steps:
-  - 先确认真实磁盘使用率和主机信息。
-  - 再收集 Top 目录和 Top 大文件，定位主要容量来源。
-  - 必要时补充 Docker 占用、deleted open files 和本地 Runbook 参考。
+  - 采集磁盘总览、主要目录、大文件与 Docker 占用证据。
+  - 基于实时证据判断主要容量来源和证据边界。
+  - 补充 deleted open files 与 Runbook 参考。
 output_format:
   - 任务与对象
   - 已确认事实
@@ -42,6 +43,4 @@ output_format:
 
 # Disk Pressure Profile
 
-这个 Skill 现在只负责把“磁盘压力”场景路由到 `disk_pressure_profile`。
-真正的执行计划、证据收集、补查和收口都由新的 Investigation Engine 负责，
-而不是直接用 Skill 里的文本步骤驱动执行。
+这个 Skill 只负责把请求路由到 `disk_pressure_profile`，由统一 Investigation Engine 生成结构化任务、采集证据并输出报告。

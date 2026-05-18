@@ -1,4 +1,4 @@
-"""Helpers for default patrol alert discovery and profile dispatch."""
+"""Helpers for patrol alert discovery and profile dispatch."""
 
 from __future__ import annotations
 
@@ -52,9 +52,6 @@ def suggest_future_profile_id(alert: dict[str, Any] | None) -> str | None:
     """Map a known alert to a future profile identifier for roadmap guidance."""
     if not isinstance(alert, dict):
         return None
-    alert_name = str(alert.get("alert_name") or "")
-    if alert_name in CPU_ALERT_NAMES | MEMORY_ALERT_NAMES | DISK_ALERT_NAMES:
-        return None
     return None
 
 
@@ -65,11 +62,11 @@ def build_no_alert_patrol_report() -> str:
         # AIOps 巡检报告
 
         ## 巡检结论
-        - 当前未检测到活跃告警。
+        - 当前未发现活跃主机级告警。
 
         ## 说明
-        - 本次默认巡检已完成告警发现流程。
-        - 由于没有活跃告警，本轮未继续分发到深度诊断 Profile。
+        - 当前告警分发器没有发现 warning / critical 的主机级告警信号。
+        - 如需进一步确认主机资源状态，请执行主机健康巡检或专项诊断。
         """
     ).strip()
 
@@ -84,8 +81,8 @@ def build_unconfigured_alert_source_report() -> str:
         - 当前未配置活跃告警源。
 
         ## 说明
-        - 本次默认巡检未进入 Profile 分发。
-        - 如需巡检告警，请启用 mock 或 remote_host 告警源。
+        - 本次未进入告警分发链路。
+        - 如需启用默认巡检告警发现，请配置 mock 或 remote_host 告警源。
         """
     ).strip()
 
@@ -100,25 +97,24 @@ def build_unsupported_profile_report(alert: dict[str, Any] | None) -> str:
     future_profile = suggest_future_profile_id(alert)
 
     next_step = (
-        f"- 建议后续补充 `{future_profile}` 结构化 Profile，并迁移到统一 Investigation Engine。"
+        f"- 后续建议补充 `{future_profile}` 结构化 Profile，并接入统一 Investigation Engine。"
         if future_profile
-        else "- 建议后续补充与该告警类型对应的 execution_profile，并迁移到统一 Investigation Engine。"
+        else "- 后续建议为该告警类型补充 execution_profile，并接入统一 Investigation Engine。"
     )
 
     return dedent(
         f"""
         # AIOps 巡检报告
 
-        ## 已发现的活跃告警
+        ## 已发现活跃告警
         - 对象：`{target_name}`
         - 告警：`{alert_name}`
         - 严重级别：`{severity}`
-        - 告警来源：`{source}`
+        - 来源：`{source}`
 
         ## 当前处理结果
-        - 已完成告警发现与目标告警选择。
-        - 当前尚未实现该告警类型对应的结构化 Investigation Profile。
-        - 为避免进入不受控的旧式深度自主排查链路，本次未继续执行深诊断。
+        - 当前已发现主机级告警，但尚未实现对应的结构化 Investigation Profile。
+        - 本次没有继续进入深度自主排查链路。
 
         ## 后续建议
         {next_step}

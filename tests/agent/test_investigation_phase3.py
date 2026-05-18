@@ -10,6 +10,7 @@ PROFILES_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "profiles.p
 EVIDENCE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "evidence.py"
 DISK_CLEANUP_PATH = ROOT / "app" / "agent" / "aiops" / "disk_cleanup.py"
 DISK_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "disk_engine.py"
+HOST_HEALTH_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "host_health_engine.py"
 MEMORY_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "memory_engine.py"
 CPU_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "cpu_engine.py"
 RUNTIME_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "runtime.py"
@@ -42,6 +43,7 @@ disk_cleanup = _load_module("app.agent.aiops.disk_cleanup", DISK_CLEANUP_PATH)
 disk_engine = _load_module("app.agent.aiops.investigation.disk_engine", DISK_ENGINE_PATH)
 memory_engine = _load_module("app.agent.aiops.investigation.memory_engine", MEMORY_ENGINE_PATH)
 cpu_engine = _load_module("app.agent.aiops.investigation.cpu_engine", CPU_ENGINE_PATH)
+host_health_engine = _load_module("app.agent.aiops.investigation.host_health_engine", HOST_HEALTH_ENGINE_PATH)
 runtime = _load_module("app.agent.aiops.investigation.runtime", RUNTIME_PATH)
 patrol_dispatch = _load_module("app.agent.aiops.investigation.patrol_dispatch", PATROL_DISPATCH_PATH)
 
@@ -58,12 +60,24 @@ def test_runtime_registry_exposes_disk_runtime():
     ]
 
 
-def test_default_profile_is_dispatcher_profile():
+def test_default_profile_is_host_health_profile():
     profile = profiles.resolve_selected_profile(mode="default", matched_skills=[])
     assert profile is not None
-    assert profile.profile_id == "patrol_dispatch_profile"
+    assert profile.profile_id == "host_health_patrol_profile"
     store = evidence.build_evidence_store(profile)
-    assert set(store) == {"active_alerts", "target_alert"}
+    assert set(store) == {"cpu_summary", "memory_summary", "disk_usage", "active_alerts"}
+
+
+def test_runtime_registry_exposes_host_health_runtime():
+    host_runtime = runtime.get_runtime("host_health_patrol_profile")
+    assert host_runtime is not None
+    tasks = host_runtime.build_initial_tasks({})
+    assert [task["tool"] for task in tasks] == [
+        "get_cpu_summary",
+        "get_memory_summary",
+        "get_disk_usage",
+        "get_patrol_alerts",
+    ]
 
 
 def test_patrol_dispatch_maps_disk_alert_to_disk_profile():
@@ -91,4 +105,4 @@ def test_patrol_dispatch_stops_cleanly_for_unsupported_alert_profile():
     assert patrol_dispatch.resolve_alert_profile_id(target_alert) is None
     report = patrol_dispatch.build_unsupported_profile_report(target_alert)
     assert "HighNetworkLatency" in report
-    assert "当前尚未实现该告警类型对应的结构化 Investigation Profile" in report
+    assert "尚未实现对应的结构化 Investigation Profile" in report

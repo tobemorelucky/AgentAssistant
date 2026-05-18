@@ -12,13 +12,13 @@ from .cpu_engine import (
     build_follow_up_tasks as build_cpu_follow_up_tasks,
     build_initial_cpu_tasks,
     compute_cpu_no_progress_rounds,
+    decide_cpu_stop,
     normalize_cpu_tool_result,
     summarize_cpu_evidence_store,
     summarize_cpu_investigation_task,
     summarize_cpu_tool_result,
     update_cpu_evidence_store,
     verify_cpu_investigation_report,
-    decide_cpu_stop,
 )
 from .disk_engine import (
     DISK_PRESSURE_PROFILE_ID,
@@ -31,6 +31,20 @@ from .disk_engine import (
     summarize_evidence_store as summarize_disk_evidence_store,
     update_disk_evidence_store,
     verify_disk_investigation_report,
+)
+from .host_health_engine import (
+    HOST_HEALTH_PATROL_PROFILE_ID,
+    build_follow_up_tasks as build_host_health_follow_up_tasks,
+    build_host_health_patrol_report,
+    build_initial_host_health_tasks,
+    compute_host_health_no_progress_rounds,
+    decide_host_health_stop,
+    normalize_host_health_tool_result,
+    summarize_host_health_evidence_store,
+    summarize_host_health_investigation_task,
+    summarize_host_health_tool_result,
+    update_host_health_evidence_store,
+    verify_host_health_patrol_report,
 )
 from .memory_engine import (
     MEMORY_PRESSURE_PROFILE_ID,
@@ -55,28 +69,14 @@ class InvestigationRuntime(Protocol):
     profile_id: str
 
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]: ...
-
-    def update_evidence_store(
-        self,
-        state: dict[str, Any],
-        task: dict[str, Any],
-        raw_result: Any,
-    ) -> dict[str, dict[str, Any]]: ...
-
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]: ...
     def build_follow_up_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]: ...
-
     def decide_stop(self, state: dict[str, Any]) -> StopDecision: ...
-
     def build_report(self, state: dict[str, Any]) -> str: ...
-
     def verify_report(self, state: dict[str, Any]) -> dict[str, Any]: ...
-
     def normalize_result(self, task: dict[str, Any], raw_result: Any) -> Any: ...
-
     def summarize_task_result(self, task: dict[str, Any], normalized_result: Any) -> str: ...
-
     def summarize_evidence_store(self, state: dict[str, Any]) -> str: ...
-
     def compute_no_progress_rounds(self, state: dict[str, Any]) -> int: ...
 
 
@@ -88,12 +88,7 @@ class BaseInvestigationRuntime:
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def update_evidence_store(
-        self,
-        state: dict[str, Any],
-        task: dict[str, Any],
-        raw_result: Any,
-    ) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
         raise NotImplementedError
 
     def build_follow_up_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -128,19 +123,12 @@ class BaseInvestigationRuntime:
 
 
 class DiskInvestigationRuntime(BaseInvestigationRuntime):
-    """Runtime adapter for the disk pressure profile."""
-
     profile_id = DISK_PRESSURE_PROFILE_ID
 
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_disk_tasks()
 
-    def update_evidence_store(
-        self,
-        state: dict[str, Any],
-        task: dict[str, Any],
-        raw_result: Any,
-    ) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
         return update_disk_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -187,20 +175,66 @@ class DiskInvestigationRuntime(BaseInvestigationRuntime):
         return summarize_disk_investigation_task(task)
 
 
-class MemoryInvestigationRuntime(BaseInvestigationRuntime):
-    """Runtime adapter for the memory pressure profile."""
+class HostHealthPatrolRuntime(BaseInvestigationRuntime):
+    profile_id = HOST_HEALTH_PATROL_PROFILE_ID
 
+    def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        return build_initial_host_health_tasks()
+
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+        return update_host_health_evidence_store(
+            dict(state.get("evidence_store") or {}),
+            slot=str(task.get("slot") or ""),
+            tool_name=str(task.get("tool") or ""),
+            raw_result=raw_result,
+        )
+
+    def build_follow_up_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
+        return build_host_health_follow_up_tasks(state)
+
+    def decide_stop(self, state: dict[str, Any]) -> StopDecision:
+        return decide_host_health_stop(state)
+
+    def build_report(self, state: dict[str, Any]) -> str:
+        return build_host_health_patrol_report(state)
+
+    def verify_report(self, state: dict[str, Any]) -> dict[str, Any]:
+        findings, missing_evidence, risk_warnings = verify_host_health_patrol_report(state)
+        return {
+            "passed": not findings,
+            "findings": findings,
+            "suggested_next_steps": [],
+            "missing_evidence": missing_evidence,
+            "risk_warnings": risk_warnings,
+        }
+
+    def normalize_result(self, task: dict[str, Any], raw_result: Any) -> Any:
+        return normalize_host_health_tool_result(str(task.get("tool") or ""), raw_result)
+
+    def summarize_task_result(self, task: dict[str, Any], normalized_result: Any) -> str:
+        return summarize_host_health_tool_result(str(task.get("tool") or ""), normalized_result)
+
+    def summarize_evidence_store(self, state: dict[str, Any]) -> str:
+        return summarize_host_health_evidence_store(dict(state.get("evidence_store") or {}))
+
+    def compute_no_progress_rounds(self, state: dict[str, Any]) -> int:
+        return compute_host_health_no_progress_rounds(
+            dict(state.get("evidence_store") or {}),
+            previous_no_progress_rounds=int(state.get("no_progress_rounds") or 0),
+            last_slot=state.get("last_investigation_slot") if isinstance(state.get("last_investigation_slot"), str) else None,
+        )
+
+    def summarize_task(self, task: dict[str, Any]) -> str:
+        return summarize_host_health_investigation_task(task)
+
+
+class MemoryInvestigationRuntime(BaseInvestigationRuntime):
     profile_id = MEMORY_PRESSURE_PROFILE_ID
 
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_memory_tasks()
 
-    def update_evidence_store(
-        self,
-        state: dict[str, Any],
-        task: dict[str, Any],
-        raw_result: Any,
-    ) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
         return update_memory_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -248,19 +282,12 @@ class MemoryInvestigationRuntime(BaseInvestigationRuntime):
 
 
 class CpuInvestigationRuntime(BaseInvestigationRuntime):
-    """Runtime adapter for the CPU pressure profile."""
-
     profile_id = CPU_PRESSURE_PROFILE_ID
 
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_cpu_tasks()
 
-    def update_evidence_store(
-        self,
-        state: dict[str, Any],
-        task: dict[str, Any],
-        raw_result: Any,
-    ) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
         return update_cpu_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -308,6 +335,7 @@ class CpuInvestigationRuntime(BaseInvestigationRuntime):
 
 
 RUNTIME_REGISTRY: dict[str, InvestigationRuntime] = {
+    HOST_HEALTH_PATROL_PROFILE_ID: HostHealthPatrolRuntime(),
     DISK_PRESSURE_PROFILE_ID: DiskInvestigationRuntime(),
     MEMORY_PRESSURE_PROFILE_ID: MemoryInvestigationRuntime(),
     CPU_PRESSURE_PROFILE_ID: CpuInvestigationRuntime(),

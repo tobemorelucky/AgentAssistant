@@ -454,3 +454,14 @@ AIOPS_REMOTE_HOST_TOKEN=
   - whether the tool name exists in `tool_policy.yaml`
   - whether its level is `read_only` or `low_risk`
   - whether the backend service has been restarted after the policy update
+
+## Default Patrol Semantics
+
+- Default AIOps patrol now uses `host_health_patrol_profile`.
+- It collects:
+  - `get_cpu_summary`
+  - `get_memory_summary`
+  - `get_disk_usage`
+  - `get_patrol_alerts` (optional)
+- `patrol_dispatch_profile` is now an internal alert dispatch capability and is no longer the full default patrol by itself.
+- Phase 4.8A only produces a host health report and follow-up suggestions. It does not automatically jump into CPU / Memory / Disk deep diagnosis yet.

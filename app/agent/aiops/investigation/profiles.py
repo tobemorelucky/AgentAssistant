@@ -5,6 +5,30 @@ from __future__ import annotations
 from .models import DiagnosisIntent, DiagnosisProfile
 
 
+HOST_HEALTH_PATROL_PROFILE = DiagnosisProfile(
+    profile_id="host_health_patrol_profile",
+    supported_intents=[DiagnosisIntent.DEFAULT_PATROL],
+    resource_type="host_health",
+    required_evidence_slots=["cpu_summary", "memory_summary", "disk_usage"],
+    conditional_evidence_slots=["active_alerts"],
+    reference_evidence_slots=[],
+    stop_rules={
+        "max_rounds": 2,
+        "max_no_progress_rounds": 1,
+        "max_attempts_per_slot": 2,
+    },
+    report_schema=[
+        "巡检任务",
+        "巡检结论",
+        "CPU 状态",
+        "内存状态",
+        "磁盘状态",
+        "活跃告警",
+        "风险提示",
+        "后续建议",
+    ],
+)
+
 PATROL_DISPATCH_PROFILE = DiagnosisProfile(
     profile_id="patrol_dispatch_profile",
     supported_intents=[DiagnosisIntent.DEFAULT_PATROL],
@@ -18,15 +42,15 @@ PATROL_DISPATCH_PROFILE = DiagnosisProfile(
         "max_attempts_per_slot": 1,
     },
     report_schema=[
-        "巡检摘要",
+        "巡检输入",
         "活跃告警",
         "分发结果",
         "后续建议",
     ],
 )
 
-# Compatibility alias. Phase 5 can remove this name after all legacy imports are gone.
-DEFAULT_PATROL_PROFILE = PATROL_DISPATCH_PROFILE
+# Compatibility alias. Default patrol now means host health patrol.
+DEFAULT_PATROL_PROFILE = HOST_HEALTH_PATROL_PROFILE
 
 DISK_PRESSURE_PROFILE = DiagnosisProfile(
     profile_id="disk_pressure_profile",
@@ -115,6 +139,7 @@ CPU_PRESSURE_PROFILE = DiagnosisProfile(
 )
 
 PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
+    HOST_HEALTH_PATROL_PROFILE.profile_id: HOST_HEALTH_PATROL_PROFILE,
     PATROL_DISPATCH_PROFILE.profile_id: PATROL_DISPATCH_PROFILE,
     DISK_PRESSURE_PROFILE.profile_id: DISK_PRESSURE_PROFILE,
     MEMORY_PRESSURE_PROFILE.profile_id: MEMORY_PRESSURE_PROFILE,
@@ -122,6 +147,7 @@ PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
 }
 
 EXECUTABLE_PROFILE_IDS = {
+    HOST_HEALTH_PATROL_PROFILE.profile_id,
     PATROL_DISPATCH_PROFILE.profile_id,
     DISK_PRESSURE_PROFILE.profile_id,
     MEMORY_PRESSURE_PROFILE.profile_id,
@@ -156,23 +182,21 @@ def infer_diagnosis_intent(
         "怎么办",
         "怎么处理",
         "处理建议",
-        "如何处理",
+        "修复",
         "cleanup",
         "fix",
         "how to",
     )
     status_tokens = (
-        "现在",
-        "当前",
         "情况如何",
+        "状态",
         "usage",
         "status",
-        "磁盘空间",
-        "磁盘使用",
         "cpu 情况",
         "cpu情况",
         "内存情况",
         "memory status",
+        "磁盘情况",
     )
     if any(token in normalized for token in remediation_tokens):
         return DiagnosisIntent.REMEDIATION_REQUEST
@@ -190,7 +214,7 @@ def resolve_selected_profile(
 ) -> DiagnosisProfile | None:
     """Resolve the effective profile for the current request."""
     if mode == "default":
-        return PATROL_DISPATCH_PROFILE
+        return HOST_HEALTH_PATROL_PROFILE
 
     for skill in matched_skills or []:
         if skill.get("skill_mode") != "execution_profile":

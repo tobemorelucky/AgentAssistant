@@ -1,425 +1,233 @@
 # AIOps Investigation Architecture
 
-## 背景
+## Overview
 
-当前 AgentAssistant 的 AIOps 诊断能力，正在从多条彼此分裂的历史链路，逐步迁移到统一的 Evidence-Driven Investigation Engine。
+AgentAssistant 的 AIOps 能力正在从多条割裂的老路径，迁移到统一的 Evidence-Driven Investigation Engine。
 
-历史上并存过三类路径：
+当前主线目标是：
+- 用 `DiagnosisProfile` 定义场景边界
+- 用 `InvestigationRuntime` 管理任务、证据、收口和报告
+- 用 `Evidence Store` 驱动报告和 verifier，而不是依赖自由文本计划
 
-1. `disk_cleanup` 专项确定性分支
-2. `default patrol` 模板化巡检分支
-3. `custom generic` 的自由 Planner / Executor / Verifier 长链
+## Why The Old Architecture Was Unstable
 
-这些路径曾经带来以下问题：
+在重构前，AIOps 长期并存三类不统一路径：
+- 磁盘专项的确定性分支
+- 默认巡检的模板化深诊断分支
+- custom AIOps 的 generic plan + LLM fallback 分支
 
-- Planner 写出来的步骤和 Executor 实际执行工具不一致
-- Verifier 把自由文本建议重新塞回 plan，导致 Trace 持续增长
-- 旧 Skill 会把经验性排障步骤直接塞进执行计划，容易在证据不足时过度推断
-- 默认巡检和专项诊断无法共享同一套 evidence / stop / verifier 机制
+这些路径会带来几类典型问题：
+- Planner 写的步骤和 Executor 实际执行工具不一致
+- Verifier 把自由文本 `suggested_next_steps` 回填成新 plan，导致循环
+- Skill 既像路由规则，又像执行模板，责任混乱
+- 报告常常混入没有被实时证据支撑的推断
 
-重构目标是把 AIOps 诊断统一成：
+## Core Building Blocks
 
-- DiagnosisProfile
-- InvestigationRuntime
-- Evidence Store
-- StopController
-- Evidence-grounded Report
-- Runtime-scoped Verifier
+当前统一引擎的核心构件：
 
----
+### DiagnosisProfile
 
-## Phase 1：架构止血
+定义某一诊断场景的结构化边界，包括：
+- `profile_id`
+- `supported_intents`
+- `resource_type`
+- `required_evidence_slots`
+- `conditional_evidence_slots`
+- `reference_evidence_slots`
+- `stop_rules`
+- `report_schema`
 
-Phase 1 完成了统一架构的最小骨架，并先止住旧 generic 长链带来的不稳定性。
+### InvestigationRuntime
 
-### 新增基础模型
+每个 executable profile 对应一个 runtime，统一实现：
+- `build_initial_tasks`
+- `update_evidence_store`
+- `build_follow_up_tasks`
+- `decide_stop`
+- `build_report`
+- `verify_report`
+- `normalize_result`
+- `summarize_task_result`
+- `summarize_evidence_store`
+- `compute_no_progress_rounds`
 
-- `DiagnosisIntent`
-- `DiagnosisProfile`
-- `EvidenceRecord`
-- `InvestigationTask`
-- `StopDecision`
+### Evidence Store
 
-### 扩展状态
+Evidence Store 记录每个 evidence slot 的：
+- `status`
+- `source`
+- `payload`
+- `attempts`
+- `quality`
+- `error_message`
 
-`PlanExecuteState` 新增：
+报告、replanner 和 verifier 都优先围绕 `evidence_store` 工作。
 
-- `diagnosis_intent`
-- `selected_profile`
-- `evidence_store`
-- `investigation_round`
-- `no_progress_rounds`
-- `stop_decision`
+### Stop Controller
 
-### Skill 重新定位
+Stop 逻辑以 profile 为中心，避免无限补查。典型收口条件：
+- required evidence 已满足
+- 无进展轮次达到阈值
+- 某些 required slot 已达到最大尝试次数
+- 总轮次达到上限
 
-Skill 被降级为三种模式：
+## Skill Semantics
 
+Skill 已拆成三种语义：
 - `execution_profile`
 - `reference_playbook`
 - `draft`
 
-其中：
-
-- `execution_profile` 才允许进入正式执行链
-- `reference_playbook` 只能作为知识参考
+当前原则：
+- `execution_profile` 才允许进入可执行 Investigation Engine
+- `reference_playbook` 只作为知识参考，不直接驱动执行计划
 - `draft` 不进入正式执行
 
-### Legacy Generic 止血
+## Phase Progress
 
-新增配置：
+### Phase 1: 架构止血
 
-- `AIOPS_ALLOW_LEGACY_GENERIC_DIAGNOSIS=false`
+目标：
+- 停止 custom generic 长链继续扩散
+- 给新引擎补上基础模型和状态字段
 
-默认关闭旧 generic 深链。
+结果：
+- 新增 investigation 基础模型
+- 扩展 `PlanExecuteState`
+- 老 Skill 默认降级为 `reference_playbook`
+- 未命中 `execution_profile` 的 custom AIOps 不再进入旧 generic 深链
+- verifier 不再把自由文本 `suggested_next_steps` 直接回填 plan
 
-效果是：
+### Phase 2: Disk Runtime
 
-- 如果 custom AIOps 没命中 `execution_profile`
-- 不再进入自由 LLM 长链
-- 直接输出受控结果，说明当前尚未接入对应结构化 Profile
+目标：
+- 把磁盘诊断作为第一个正式 profile 迁入新引擎
 
----
-
-## Phase 2：disk_pressure_profile 迁移完成
-
-磁盘诊断是第一个正式迁移到新引擎的 Profile。
-
-### Profile
-
-- `profile_id = "disk_pressure_profile"`
-
-required evidence:
-
-- `disk_usage`
-- `large_directories`
-- `large_files`
-
-conditional evidence:
-
-- `docker_disk_usage`
-- `deleted_open_files`
-
-reference evidence:
-
-- `disk_runbook`
-
-### 已落地能力
-
-- 结构化 `InvestigationTask`
+结果：
+- `disk_pressure_profile`
+- `DiskInvestigationRuntime`
+- InvestigationTask
 - Evidence Store
 - Follow-up Tasks
 - StopController
 - Evidence-grounded Report
-- Disk Runtime Verifier
+- Disk-specific Verifier
 
-### 结果
+### Phase 3: Runtime Registry + Patrol Dispatcher
 
-磁盘诊断不再围绕 `past_steps` 拼接报告，而是基于 `evidence_store` 决定：
+目标：
+- 从 disk-specific if/else 过渡到通用 runtime registry
+- 把默认巡检从“深诊断模板”缩成“告警发现 + 分发”
 
-- 继续补查
-- 受限收口
-- 完整收口
+结果：
+- 新增 runtime registry
+- `patrol_dispatch_profile`
+- 默认巡检不再自动回退旧 generic 深链
+- 告警可以分发到 `disk_pressure_profile` / `cpu_pressure_profile` / `memory_pressure_profile`
 
----
+### Phase 4: CPU / Memory Runtime
 
-## Phase 3：Runtime Registry + Patrol Dispatcher
+目标：
+- 把 CPU / Memory 正式接入统一引擎
 
-Phase 3 的目标是把“某个 Profile 的专项逻辑”从主流程里抽出来，并把默认巡检改造成统一分发入口。
-
-### Runtime Registry
-
-新增：
-
-- `app/agent/aiops/investigation/runtime.py`
-
-统一定义 `InvestigationRuntime` 接口：
-
-1. `build_initial_tasks(state)`
-2. `update_evidence_store(state, task, raw_result)`
-3. `build_follow_up_tasks(state)`
-4. `decide_stop(state)`
-5. `build_report(state)`
-6. `verify_report(state)`
-7. `normalize_result(task, raw_result)`
-8. `summarize_task_result(task, normalized_result)`
-9. `summarize_evidence_store(state)`
-10. `compute_no_progress_rounds(state)`
-
-首个 runtime：
-
-- `DiskInvestigationRuntime`
-
-### Patrol Dispatcher
-
-默认巡检不再承诺“深诊断模板链”，而是只负责：
-
-1. 活跃告警发现
-2. 目标告警选择
-3. alert → profile 分发
-
-如果当前告警尚无可执行 Profile，则输出受控 unsupported-profile 结果，而不是回退旧式深链。
-
----
-
-## Phase 4：Memory / CPU Profile 正式接入
-
-Phase 4 在已有 runtime registry 之上，补齐 CPU / Memory 的 Host Agent 真实数据、MCP tools、execution skills 和 runtimes。
-
-### Host Agent 新真实接口
-
-#### Memory
-
-- `GET /api/v1/system/memory-summary`
-- `GET /api/v1/process/top-memory?limit=10`
-
-#### CPU
-
-- `GET /api/v1/system/cpu-summary`
-- `GET /api/v1/process/top-cpu?limit=10`
-
-### monitor_provider 新增 provider 函数
-
-- `get_memory_summary_data()`
-- `list_top_memory_processes_data(limit=10)`
-- `get_cpu_summary_data()`
-- `list_top_cpu_processes_data(limit=10)`
-
-支持：
-
-- `mock`
-- `remote_host`
-
-并统一复用：
-
-- `X-Host-Agent-Token`
-- 结构化错误返回
-- `source="remote_host"`
-
-### MCP tools 新增
-
-- `get_memory_summary`
-- `list_top_memory_processes`
-- `get_cpu_summary`
-- `list_top_cpu_processes`
-
-### 新 Profile
-
-#### `memory_pressure_profile`
-
-required evidence:
-
-- `memory_summary`
-- `top_memory_processes`
-
-reference / conditional evidence:
-
-- `memory_runbook`
-
-#### `cpu_pressure_profile`
-
-required evidence:
-
-- `cpu_summary`
-- `top_cpu_processes`
-
-reference / conditional evidence:
-
-- `cpu_runbook`
-
-### 新 Runtime
-
+结果：
+- `memory_pressure_profile`
+- `cpu_pressure_profile`
 - `MemoryInvestigationRuntime`
 - `CpuInvestigationRuntime`
+- 对接 Host Agent 的 CPU / Memory 实时接口
 
-两者都复用统一接口：
+当前第一版 CPU / Memory 只覆盖：
+- 当前状态
+- 热点进程
+- 基础建议
+- 有限收口
 
-1. `build_initial_tasks`
-2. `update_evidence_store`
-3. `build_follow_up_tasks`
-4. `decide_stop`
-5. `build_report`
-6. `verify_report`
-7. `normalize_result`
-8. `summarize_task_result`
-9. `summarize_evidence_store`
-10. `compute_no_progress_rounds`
+刻意没有强行加入日志 / 工单，是为了先保证：
+- 证据真实
+- 报告不乱推断
+- 工作流可稳定结束
 
-### 为什么 Phase 4 不强行加日志 / 工单
+### Phase 4.5: Alert Provider & CPU Compatibility
 
-第一版 CPU / Memory Runtime 只做：
+目标：
+- 统一巡检告警来源
+- 校正 Host Agent CPU 字段兼容
 
-- 当前状态查询
-- 主要压力源定位
-- 基础处置建议
-- 有边界的报告收口
+结果：
+- CPU summary 兼容 `cpu_percent / logical_cpu_count / load_1m`
+- 新增 `AIOPS_ALERT_PROVIDER=mock|remote_host|disabled`
+- remote_host 巡检可合成主机级告警：
+  - `HostHighCPUUsage`
+  - `HostHighMemoryUsage`
+  - `HostHighDiskUsage`
 
-暂不强行加入：
+### Phase 4.8A: Host Health Patrol
 
-- 服务日志
-- 历史工单
-- GC / heap / pprof / 技术栈假设
+目标：
+- 让默认 AIOps 巡检不再只是“查活跃告警”
+- 升级成真正的主机基础健康巡检
 
-原因是：
+结果：
+- 新增 `host_health_patrol_profile`
+- 新增 `HostHealthPatrolRuntime`
+- 默认 `mode=default` 现在优先进入主机健康巡检
+- 巡检至少采集：
+  - `cpu_summary`
+  - `memory_summary`
+  - `disk_usage`
+  - optional `active_alerts`
 
-1. 先把 CPU / Memory 的核心事实证据打通
-2. 避免在没有对应 Host Agent 或 MCP 工具支撑时过度推断
-3. 保证流程可收敛，不再回到旧式 generic 长链
+当前 Phase 4.8A 的语义是：
+- 如果资源 healthy 且没有活跃告警，输出主机健康报告
+- 如果某项异常，报告提示建议进入 CPU / Memory / Disk 专项诊断
+- 还不会自动跳入专项 Profile
 
-### Patrol Dispatcher 新映射
+## Current Executable Profiles
 
-默认巡检现在的 alert → profile 映射为：
-
-- `HighDiskUsage` / `DiskFull` → `disk_pressure_profile`
-- `HighCPUUsage` → `cpu_pressure_profile`
-- `HighMemoryUsage` / `MemoryPressure` → `memory_pressure_profile`
-
-这意味着：
-
-- default patrol 只做 alert discovery + profile dispatch
-- 深诊断由对应 runtime profile 接管
-
----
-
-## Phase 4.5：真实证据验收修复与巡检告警源校正
-
-Phase 4.5 不进入 Phase 5 删除 legacy，而是先把 CPU / Memory 的真实字段兼容和默认巡检告警语义校正到位。
-
-### CPU summary 字段兼容
-
-Host Agent 的 CPU 摘要接口在不同版本下可能返回两种字段风格：
-
-1. 旧风格
-   - `usage_percent`
-   - `cores`
-   - `load_1`
-   - `load_5`
-   - `load_15`
-2. 新风格
-   - `cpu_percent`
-   - `logical_cpu_count`
-   - `load_1m`
-   - `load_5m`
-   - `load_15m`
-
-主项目在 provider 层统一适配成：
-
-- `usage_percent`
-- `cores`
-- `logical_cpu_count`
-- `load_1`
-- `load_5`
-- `load_15`
-
-这样 CPU runtime 和报告层不需要承担字段兼容成本。
-
-### Alert Provider 三种模式
-
-新增：
-
-- `AIOPS_ALERT_PROVIDER=mock|remote_host|disabled`
-
-三种模式语义如下：
-
-1. `mock`
-   - 保留现有 Demo 告警能力
-   - 继续返回服务级 mock 告警
-2. `remote_host`
-   - 不再返回 `data-sync-service` 这类 mock 服务告警
-   - 改为基于 Host Agent 实时摘要合成主机级活跃告警
-3. `disabled`
-   - 默认巡检直接返回“当前未配置活跃告警源”
-   - 不进入 Profile 分发
-
-### remote_host 主机级告警合成
-
-`remote_host` 模式下，巡检告警来源于真实 Host Agent 摘要：
-
-- CPU `status=warning/critical` → `HostHighCPUUsage`
-- Memory `status=warning/critical` → `HostHighMemoryUsage`
-- Disk `status=warning/critical` → `HostHighDiskUsage`
-
-告警字段统一为：
-
-- `alert_name`
-- `severity`
-- `resource_type`
-- `host`
-- `description`
-- `source="remote_host"`
-
-### Patrol Dispatcher 映射补充
-
-默认巡检额外支持主机级 alert → profile：
-
-- `HostHighCPUUsage` → `cpu_pressure_profile`
-- `HostHighMemoryUsage` → `memory_pressure_profile`
-- `HostHighDiskUsage` → `disk_pressure_profile`
-
-这样默认巡检在 `remote_host` 模式下，告警对象和后续调查对象都保持主机语义一致。
-
----
-
-## 当前统一架构
-
-### Diagnosis Profile
-
-当前正式可执行 Profile：
-
-- `patrol_dispatch_profile`
+当前已可执行的 profile：
+- `host_health_patrol_profile`
 - `disk_pressure_profile`
 - `memory_pressure_profile`
 - `cpu_pressure_profile`
+- `patrol_dispatch_profile`（内部能力，主要用于告警分发）
 
-### Investigation Runtime
+## Default Patrol Today
 
-当前已注册 runtime：
+现在默认巡检的职责已经变为：
+- 先做主机健康巡检
+- 输出 CPU / 内存 / 磁盘 / 活跃告警的整体结论
+- 若发现异常，给出进入专项诊断的建议
 
-- `DiskInvestigationRuntime`
-- `MemoryInvestigationRuntime`
-- `CpuInvestigationRuntime`
+而不是：
+- 只查一遍告警就结束
+- 或直接进入模板化深诊断
 
-### Engine State
+## Legacy Paths
 
-统一依赖：
+当前仍保留但已标记 legacy 的逻辑包括：
+- old `disk_cleanup` 兼容分支
+- old patrol 深诊断模板链
+- old generic fallback compatibility
 
-- `selected_profile`
-- `evidence_store`
-- `investigation_round`
-- `no_progress_rounds`
-- `stop_decision`
+这些逻辑目前主要用于兼容和安全兜底，Phase 5 才考虑删除。
 
-### Legacy Compatibility
+## Phase 4.8B Next
 
-仍暂时保留但已标记 legacy：
+下一阶段建议优先做：
+- host health patrol 检测到异常后，自动 dispatch 到对应专项 profile
 
-- 旧 `disk_cleanup` 专项兼容逻辑
-- 旧 patrol 深链兼容逻辑
-- 旧 generic fallback 兼容逻辑
+推荐顺序：
+1. CPU / Memory / Disk 异常识别统一化
+2. `host_health_patrol_profile` 到专项 profile 的自动跳转策略
+3. 异常后共享已有 evidence，避免重复采集
+4. 统一“巡检 -> 分发 -> 专项诊断”的 Trace 语义
 
-当前默认路径优先级已经切换到：
+## Phase 5 Later
 
-- runtime registry
-- patrol dispatcher
-- execution_profile
-
----
-
-## Phase 5 规划
-
-后续建议按以下顺序继续推进：
-
-1. 迁移 `memory_profile` / `cpu_profile` 的更多扩展证据
-   - 服务日志
-   - 历史工单
-   - 更细粒度应用指标
-2. 继续把更多 alert 映射到结构化 Profile
-3. 删除 legacy `disk_cleanup` / patrol 深链兼容分支
-4. 最终让 default patrol 完全成为 dispatcher，而不是诊断模板入口
-
-重构完成后的 AIOps 应该统一表现为：
-
-- Planner 负责选 Profile / 出结构化任务
-- Executor 只执行任务指定工具
-- Replanner 基于 evidence_store 决定补查还是收口
-- Verifier 只做证据一致性检查，不再生成自由文本计划
+只有在下面条件基本满足后，再进入 Phase 5 删除 legacy：
+- host health patrol 稳定
+- CPU / Memory / Disk runtime 稳定
+- 自动 dispatch 稳定
+- 旧 generic / old patrol / old disk 兼容路径不再被主流程依赖

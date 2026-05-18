@@ -28,7 +28,7 @@ stop_controller = _load_module("app.agent.aiops.investigation.stop_controller", 
 def test_default_patrol_profile_is_registered():
     profile = profiles.resolve_selected_profile(mode="default", matched_skills=[])
     assert profile is not None
-    assert profile.profile_id == "patrol_dispatch_profile"
+    assert profile.profile_id == "host_health_patrol_profile"
     assert profiles.supports_profile_execution(profile.profile_id) is True
 
 
@@ -45,7 +45,7 @@ def test_disk_pressure_profile_is_registered():
 def test_missing_execution_profile_defaults_to_knowledge_only_or_reference_path():
     intent = profiles.infer_diagnosis_intent(
         mode="custom",
-        input_text="内存满了怎么办？",
+        input_text="内存满了怎么办",
         matched_skills=[{"name": "High Memory Diagnosis", "skill_mode": "reference_playbook", "profile_id": None}],
     )
     assert intent in {models.DiagnosisIntent.REMEDIATION_REQUEST, models.DiagnosisIntent.INCIDENT_DIAGNOSIS}
@@ -54,9 +54,8 @@ def test_missing_execution_profile_defaults_to_knowledge_only_or_reference_path(
 
 def test_evidence_store_starts_empty_for_default_patrol():
     store = evidence.build_evidence_store(profiles.DEFAULT_PATROL_PROFILE)
-    assert "active_alerts" in store
-    assert "target_alert" in store
-    assert store["active_alerts"]["status"] == models.EvidenceStatus.MISSING
+    assert {"cpu_summary", "memory_summary", "disk_usage", "active_alerts"} <= set(store)
+    assert store["cpu_summary"]["status"] == models.EvidenceStatus.MISSING
 
 
 def test_stop_controller_finalizes_with_limitations_after_no_progress():

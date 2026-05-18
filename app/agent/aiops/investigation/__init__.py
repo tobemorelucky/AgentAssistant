@@ -13,6 +13,7 @@ from .models import (
 from .patrol_dispatch import (
     PATROL_DISPATCH_PROFILE_ID,
     build_no_alert_patrol_report,
+    build_unconfigured_alert_source_report,
     build_unsupported_profile_report,
     resolve_alert_profile_id,
     select_target_alert,
@@ -59,6 +60,7 @@ __all__ = [
     "InvestigationRuntime",
     "build_evidence_store",
     "build_no_alert_patrol_report",
+    "build_unconfigured_alert_source_report",
     "build_unsupported_profile_report",
     "count_evidence_statuses",
     "decide_stop_action",

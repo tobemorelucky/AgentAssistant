@@ -115,6 +115,7 @@ class AIOpsService:
         if state.get("response") and state.get("plan_source") in {
             "patrol_dispatch_no_tool",
             "patrol_dispatch_no_alert",
+            "patrol_dispatch_disabled",
             "patrol_dispatch_unsupported_profile",
         }:
             return END

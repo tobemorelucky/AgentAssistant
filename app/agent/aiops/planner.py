@@ -14,6 +14,7 @@ from app.agent.aiops.incident_memory import find_similar_incidents
 from app.agent.aiops.investigation import (
     build_evidence_store,
     build_no_alert_patrol_report,
+    build_unconfigured_alert_source_report,
     build_unsupported_profile_report,
     decide_stop_action,
     get_profile,
@@ -207,7 +208,11 @@ async def _dispatch_default_patrol(
     tool_map: dict[str, Any],
 ) -> dict[str, Any]:
     trace_events: list[dict[str, Any]] = []
-    active_alert_tool = tool_map.get("get_active_alerts") or tool_map.get("list_active_alerts")
+    active_alert_tool = (
+        tool_map.get("get_patrol_alerts")
+        or tool_map.get("get_active_alerts")
+        or tool_map.get("list_active_alerts")
+    )
     if active_alert_tool is None:
         report = dedent(
             """
@@ -233,6 +238,26 @@ async def _dispatch_default_patrol(
         }
 
     alert_result = await invoke_tool(active_alert_tool, {"include_resolved": False})
+    if str(alert_result.get("provider") or "").lower() == "disabled":
+        report = build_unconfigured_alert_source_report()
+        trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="planner",
+                status="success",
+                title="Patrol completed without configured alert provider",
+                result_summary="Alert provider disabled",
+            )
+        )
+        return {
+            "active_alerts": [],
+            "target_alert": None,
+            "response": report,
+            "plan_source": "patrol_dispatch_disabled",
+            "selected_profile": selected_profile,
+            "trace_events": trace_events,
+        }
+
     active_alerts = list(alert_result.get("active_alerts") or alert_result.get("alerts") or [])
     target_alert = select_target_alert(active_alerts)
     trace_events.append(

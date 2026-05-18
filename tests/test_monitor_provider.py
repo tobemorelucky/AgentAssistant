@@ -303,6 +303,36 @@ def test_remote_host_cpu_summary_adapts_success(monkeypatch):
     assert result["load_1"] == 0.82
 
 
+def test_remote_host_cpu_summary_adapts_alternate_field_names(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/system/cpu-summary"
+        return 200, {
+            "ok": True,
+            "host": "he-VMware-Virtual-Platform",
+            "cpu_percent": 12.5,
+            "logical_cpu_count": 6,
+            "load_1m": 2.66,
+            "load_5m": 0.99,
+            "load_15m": 0.35,
+            "status": "healthy",
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.get_cpu_summary_data()
+
+    assert result["usage_percent"] == 12.5
+    assert result["cores"] == 6
+    assert result["logical_cpu_count"] == 6
+    assert result["load_1"] == 2.66
+    assert result["load_5"] == 0.99
+    assert result["load_15"] == 0.35
+
+
 def test_remote_host_top_cpu_processes_adapts_success(monkeypatch):
     monitor_provider.config.aiops_monitor_provider = "remote_host"
     monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"

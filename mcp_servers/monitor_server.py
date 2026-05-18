@@ -19,6 +19,11 @@ from typing import Dict, Any, Optional
 from datetime import datetime, timedelta
 from fastmcp import FastMCP
 
+from app.monitoring.alert_provider import (
+    build_disabled_alert_result,
+    build_remote_host_alerts,
+    get_alert_provider_name,
+)
 from app.monitoring.monitor_provider import (
     get_cpu_summary_data,
     get_disk_usage_data,
@@ -183,7 +188,11 @@ def _load_disk_mock_data() -> dict[str, Any]:
         return json.load(fh)
 
 
-logger.info("Monitor MCP provider initialized: %s", get_monitor_provider_name())
+logger.info(
+    "Monitor MCP initialized: monitor_provider=%s, alert_provider=%s",
+    get_monitor_provider_name(),
+    get_alert_provider_name(),
+)
 
 
 
@@ -212,6 +221,18 @@ def get_active_alerts(include_resolved: bool = False) -> Dict[str, Any]:
 @log_tool_call
 def list_active_alerts(include_resolved: bool = False) -> Dict[str, Any]:
     """获取当前系统的活跃告警列表（get_active_alerts 的别名）。"""
+    return get_active_alerts(include_resolved=include_resolved)
+
+
+@mcp.tool()
+@log_tool_call
+def get_patrol_alerts(include_resolved: bool = False) -> Dict[str, Any]:
+    """Return patrol alerts using the configured alert provider."""
+    alert_provider = get_alert_provider_name()
+    if alert_provider == "disabled":
+        return build_disabled_alert_result()
+    if alert_provider == "remote_host":
+        return build_remote_host_alerts()
     return get_active_alerts(include_resolved=include_resolved)
 
 @mcp.tool()

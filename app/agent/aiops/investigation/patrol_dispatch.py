@@ -7,9 +7,9 @@ from typing import Any
 
 
 PATROL_DISPATCH_PROFILE_ID = "patrol_dispatch_profile"
-DISK_ALERT_NAMES = {"HighDiskUsage", "DiskFull"}
-CPU_ALERT_NAMES = {"HighCPUUsage"}
-MEMORY_ALERT_NAMES = {"HighMemoryUsage", "MemoryPressure"}
+DISK_ALERT_NAMES = {"HighDiskUsage", "DiskFull", "HostHighDiskUsage"}
+CPU_ALERT_NAMES = {"HighCPUUsage", "HostHighCPUUsage"}
+MEMORY_ALERT_NAMES = {"HighMemoryUsage", "MemoryPressure", "HostHighMemoryUsage"}
 
 SEVERITY_ORDER = {
     "critical": 4,
@@ -28,8 +28,8 @@ def select_target_alert(alerts: list[dict[str, Any]]) -> dict[str, Any] | None:
     def _score(alert: dict[str, Any]) -> tuple[int, str, str]:
         severity = str(alert.get("severity") or "").lower()
         alert_name = str(alert.get("alert_name") or "")
-        service_name = str(alert.get("service_name") or "")
-        return (SEVERITY_ORDER.get(severity, -1), alert_name, service_name)
+        target_name = str(alert.get("host") or alert.get("service_name") or "")
+        return (SEVERITY_ORDER.get(severity, -1), alert_name, target_name)
 
     return max(alerts, key=_score)
 
@@ -53,11 +53,7 @@ def suggest_future_profile_id(alert: dict[str, Any] | None) -> str | None:
     if not isinstance(alert, dict):
         return None
     alert_name = str(alert.get("alert_name") or "")
-    if alert_name in CPU_ALERT_NAMES:
-        return None
-    if alert_name in MEMORY_ALERT_NAMES:
-        return None
-    if alert_name in DISK_ALERT_NAMES:
+    if alert_name in CPU_ALERT_NAMES | MEMORY_ALERT_NAMES | DISK_ALERT_NAMES:
         return None
     return None
 
@@ -78,12 +74,29 @@ def build_no_alert_patrol_report() -> str:
     ).strip()
 
 
+def build_unconfigured_alert_source_report() -> str:
+    """Build the patrol report when alert provider is disabled."""
+    return dedent(
+        """
+        # AIOps 巡检报告
+
+        ## 巡检结论
+        - 当前未配置活跃告警源。
+
+        ## 说明
+        - 本次默认巡检未进入 Profile 分发。
+        - 如需巡检告警，请启用 mock 或 remote_host 告警源。
+        """
+    ).strip()
+
+
 def build_unsupported_profile_report(alert: dict[str, Any] | None) -> str:
     """Build a controlled result when an alert has no executable profile yet."""
     alert = alert or {}
     alert_name = str(alert.get("alert_name") or "unknown_alert")
-    service_name = str(alert.get("service_name") or "unknown_service")
+    target_name = str(alert.get("host") or alert.get("service_name") or "unknown-target")
     severity = str(alert.get("severity") or "unknown")
+    source = str(alert.get("source") or "unknown")
     future_profile = suggest_future_profile_id(alert)
 
     next_step = (
@@ -97,9 +110,10 @@ def build_unsupported_profile_report(alert: dict[str, Any] | None) -> str:
         # AIOps 巡检报告
 
         ## 已发现的活跃告警
-        - 服务：`{service_name}`
+        - 对象：`{target_name}`
         - 告警：`{alert_name}`
         - 严重级别：`{severity}`
+        - 告警来源：`{source}`
 
         ## 当前处理结果
         - 已完成告警发现与目标告警选择。

@@ -66,6 +66,7 @@ class Settings(BaseSettings):
     web_search_depth: str = "basic"
     web_search_timeout: float = 10.0
     aiops_monitor_provider: str = "mock"
+    aiops_alert_provider: str = "mock"
     aiops_remote_host_base_url: str = ""
     aiops_remote_host_token: str = ""
     chunk_max_size: int = 800

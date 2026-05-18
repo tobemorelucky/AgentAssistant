@@ -281,6 +281,85 @@ reference / conditional evidence:
 
 ---
 
+## Phase 4.5：真实证据验收修复与巡检告警源校正
+
+Phase 4.5 不进入 Phase 5 删除 legacy，而是先把 CPU / Memory 的真实字段兼容和默认巡检告警语义校正到位。
+
+### CPU summary 字段兼容
+
+Host Agent 的 CPU 摘要接口在不同版本下可能返回两种字段风格：
+
+1. 旧风格
+   - `usage_percent`
+   - `cores`
+   - `load_1`
+   - `load_5`
+   - `load_15`
+2. 新风格
+   - `cpu_percent`
+   - `logical_cpu_count`
+   - `load_1m`
+   - `load_5m`
+   - `load_15m`
+
+主项目在 provider 层统一适配成：
+
+- `usage_percent`
+- `cores`
+- `logical_cpu_count`
+- `load_1`
+- `load_5`
+- `load_15`
+
+这样 CPU runtime 和报告层不需要承担字段兼容成本。
+
+### Alert Provider 三种模式
+
+新增：
+
+- `AIOPS_ALERT_PROVIDER=mock|remote_host|disabled`
+
+三种模式语义如下：
+
+1. `mock`
+   - 保留现有 Demo 告警能力
+   - 继续返回服务级 mock 告警
+2. `remote_host`
+   - 不再返回 `data-sync-service` 这类 mock 服务告警
+   - 改为基于 Host Agent 实时摘要合成主机级活跃告警
+3. `disabled`
+   - 默认巡检直接返回“当前未配置活跃告警源”
+   - 不进入 Profile 分发
+
+### remote_host 主机级告警合成
+
+`remote_host` 模式下，巡检告警来源于真实 Host Agent 摘要：
+
+- CPU `status=warning/critical` → `HostHighCPUUsage`
+- Memory `status=warning/critical` → `HostHighMemoryUsage`
+- Disk `status=warning/critical` → `HostHighDiskUsage`
+
+告警字段统一为：
+
+- `alert_name`
+- `severity`
+- `resource_type`
+- `host`
+- `description`
+- `source="remote_host"`
+
+### Patrol Dispatcher 映射补充
+
+默认巡检额外支持主机级 alert → profile：
+
+- `HostHighCPUUsage` → `cpu_pressure_profile`
+- `HostHighMemoryUsage` → `memory_pressure_profile`
+- `HostHighDiskUsage` → `disk_pressure_profile`
+
+这样默认巡检在 `remote_host` 模式下，告警对象和后续调查对象都保持主机语义一致。
+
+---
+
 ## 当前统一架构
 
 ### Diagnosis Profile

@@ -330,14 +330,29 @@ def _normalize_memory_summary(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _normalize_cpu_summary(payload: dict[str, Any]) -> dict[str, Any]:
     usage_percent = _to_float(payload.get("usage_percent"))
+    if usage_percent is None:
+        usage_percent = _to_float(payload.get("cpu_percent"))
+    cores = payload.get("cores")
+    if cores is None:
+        cores = payload.get("logical_cpu_count")
+    load_1 = _to_float(payload.get("load_1"))
+    if load_1 is None:
+        load_1 = _to_float(payload.get("load_1m"))
+    load_5 = _to_float(payload.get("load_5"))
+    if load_5 is None:
+        load_5 = _to_float(payload.get("load_5m"))
+    load_15 = _to_float(payload.get("load_15"))
+    if load_15 is None:
+        load_15 = _to_float(payload.get("load_15m"))
     return {
         "ok": True,
         "host": payload.get("host") or payload.get("hostname") or "unknown-host",
         "usage_percent": usage_percent,
-        "cores": payload.get("cores"),
-        "load_1": _to_float(payload.get("load_1")),
-        "load_5": _to_float(payload.get("load_5")),
-        "load_15": _to_float(payload.get("load_15")),
+        "cores": cores,
+        "logical_cpu_count": cores,
+        "load_1": load_1,
+        "load_5": load_5,
+        "load_15": load_15,
         "status": payload.get("status") or _status_from_usage(usage_percent),
         "source": payload.get("source") or "remote_host",
     }

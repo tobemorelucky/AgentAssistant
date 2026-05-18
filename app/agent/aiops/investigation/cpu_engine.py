@@ -37,6 +37,54 @@ def _status_from_usage(usage_percent: float | None) -> str:
     return "healthy"
 
 
+def _failure_result(message: str, *, error_code: str, source: str = "unknown") -> dict[str, Any]:
+    return {
+        "ok": False,
+        "source": source or "unknown",
+        "message": message,
+        "error_code": error_code,
+    }
+
+
+def _is_error_payload(payload: dict[str, Any]) -> bool:
+    if not payload:
+        return True
+    if payload.get("ok") is False:
+        return True
+    if payload.get("error"):
+        return True
+    if payload.get("error_code"):
+        return True
+    return False
+
+
+def _cpu_summary_is_usable(normalized_result: dict[str, Any]) -> bool:
+    if normalized_result.get("ok") is False:
+        return False
+    usage_percent = normalized_result.get("usage_percent")
+    host = str(normalized_result.get("host") or "")
+    has_load = any(normalized_result.get(key) is not None for key in ("load_1", "load_5", "load_15"))
+    has_cores = normalized_result.get("cores") is not None
+    return usage_percent is not None or (host not in {"", "unknown-host"} and (has_load or has_cores))
+
+
+def _top_cpu_processes_is_usable(normalized_result: dict[str, Any]) -> bool:
+    if normalized_result.get("ok") is False:
+        return False
+    processes = normalized_result.get("processes")
+    return isinstance(processes, list) and len(processes) > 0
+
+
+def _slot_is_usable(slot: str, normalized_result: dict[str, Any]) -> bool:
+    if slot == "cpu_summary":
+        return _cpu_summary_is_usable(normalized_result)
+    if slot == "top_cpu_processes":
+        return _top_cpu_processes_is_usable(normalized_result)
+    if slot == "cpu_runbook":
+        return bool(str(normalized_result.get("content") or "").strip())
+    return normalized_result.get("ok") is not False
+
+
 def build_initial_cpu_tasks() -> list[dict[str, Any]]:
     return [
         {
@@ -44,7 +92,7 @@ def build_initial_cpu_tasks() -> list[dict[str, Any]]:
             "tool": "get_cpu_summary",
             "args": {},
             "required": True,
-            "reason": "确认当前 CPU 总体使用率与负载状态。",
+            "reason": "获取当前主机 CPU 实时摘要，确认整体 CPU 水位和负载状态。",
             "evidence_type": "cpu_summary",
         },
         {
@@ -52,7 +100,7 @@ def build_initial_cpu_tasks() -> list[dict[str, Any]]:
             "tool": "list_top_cpu_processes",
             "args": {"limit": 10},
             "required": True,
-            "reason": "定位当前最主要的 CPU 消耗进程。",
+            "reason": "获取热点 CPU 进程列表，识别当前主要 CPU 压力来源。",
             "evidence_type": "top_cpu_processes",
         },
         {
@@ -60,66 +108,83 @@ def build_initial_cpu_tasks() -> list[dict[str, Any]]:
             "tool": "retrieve_knowledge",
             "args": {"query": CPU_RUNBOOK_QUERY},
             "required": False,
-            "reason": "补充 CPU 排查 Runbook 作为参考建议。",
+            "reason": "检索 CPU 排查 Runbook，补充处置建议和风险提示。",
             "evidence_type": "cpu_runbook",
         },
     ]
 
 
 def normalize_cpu_tool_result(tool_name: str, raw_result: Any) -> dict[str, Any]:
+    payload = dict(raw_result) if isinstance(raw_result, dict) else {}
+
     if tool_name == "get_cpu_summary":
-        payload = dict(raw_result) if isinstance(raw_result, dict) else {}
-        if payload.get("ok") is False:
-            return {
-                "ok": False,
-                "source": payload.get("source") or "unknown",
-                "message": str(payload.get("message") or "CPU 摘要获取失败"),
-                "error_code": str(payload.get("error_code") or "cpu_summary_error"),
-            }
+        if _is_error_payload(payload):
+            return _failure_result(
+                str(payload.get("message") or payload.get("error") or "未成功获取实时 CPU 摘要"),
+                error_code=str(payload.get("error_code") or "tool_execution_error"),
+                source=str(payload.get("source") or "unknown"),
+            )
         usage_percent = _to_float(payload.get("usage_percent"))
+        if usage_percent is None:
+            usage_percent = _to_float(payload.get("cpu_percent"))
+        cores = payload.get("cores")
+        if cores is None:
+            cores = payload.get("logical_cpu_count")
         result = {
             "ok": True,
             "host": payload.get("host") or payload.get("hostname") or "unknown-host",
             "usage_percent": usage_percent,
-            "cores": payload.get("cores"),
-            "load_1": _to_float(payload.get("load_1")),
-            "load_5": _to_float(payload.get("load_5")),
-            "load_15": _to_float(payload.get("load_15")),
+            "cores": cores,
+            "logical_cpu_count": payload.get("logical_cpu_count") or cores,
+            "load_1": _to_float(payload.get("load_1") if payload.get("load_1") is not None else payload.get("load_1m")),
+            "load_5": _to_float(payload.get("load_5") if payload.get("load_5") is not None else payload.get("load_5m")),
+            "load_15": _to_float(payload.get("load_15") if payload.get("load_15") is not None else payload.get("load_15m")),
             "status": payload.get("status") or _status_from_usage(usage_percent),
             "source": payload.get("source") or "unknown",
         }
+        if not _cpu_summary_is_usable(result):
+            return _failure_result(
+                "未成功获取有效 CPU 摘要字段",
+                error_code="invalid_cpu_summary",
+                source=str(result.get("source") or "unknown"),
+            )
         return result
 
     if tool_name == "list_top_cpu_processes":
-        payload = dict(raw_result) if isinstance(raw_result, dict) else {}
-        if payload.get("ok") is False:
-            return {
-                "ok": False,
-                "source": payload.get("source") or "unknown",
-                "message": str(payload.get("message") or "CPU 热点进程获取失败"),
-                "error_code": str(payload.get("error_code") or "top_cpu_processes_error"),
-            }
+        if _is_error_payload(payload):
+            return _failure_result(
+                str(payload.get("message") or payload.get("error") or "未成功获取热点 CPU 进程列表"),
+                error_code=str(payload.get("error_code") or "tool_execution_error"),
+                source=str(payload.get("source") or "unknown"),
+            )
+
         processes_raw = payload.get("processes")
         if not isinstance(processes_raw, list):
             processes_raw = raw_result if isinstance(raw_result, list) else []
+
         processes: list[dict[str, Any]] = []
         for item in processes_raw:
             if not isinstance(item, dict):
                 continue
+            cpu_percent = _to_float(item.get("cpu_percent"))
+            if cpu_percent is None:
+                cpu_percent = _to_float(item.get("usage_percent"))
             processes.append(
                 {
                     "pid": item.get("pid"),
                     "process_name": item.get("process_name") or item.get("name") or item.get("command") or "unknown",
                     "command": item.get("command") or "",
-                    "cpu_percent": _to_float(item.get("cpu_percent")),
+                    "cpu_percent": cpu_percent,
                     "threads": item.get("threads"),
                     "source": item.get("source") or payload.get("source") or "unknown",
                 }
             )
+
         return {
             "ok": True,
             "processes": processes,
-            "limit": int(payload.get("limit") or len(processes)),
+            "limit": int(payload.get("limit") or len(processes) or 0),
+            "message": "" if processes else "未成功获取热点 CPU 进程列表",
             "source": payload.get("source") or "unknown",
         }
 
@@ -142,20 +207,21 @@ def _result_quality(slot: str, normalized_result: dict[str, Any]) -> tuple[Evide
         return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "工具执行失败")
 
     if slot == "cpu_summary":
-        if normalized_result.get("usage_percent") is not None:
-            return EvidenceStatus.COLLECTED, "high", ""
-        return EvidenceStatus.PARTIAL, "low", "CPU 摘要未返回具体使用率"
+        if _cpu_summary_is_usable(normalized_result):
+            if normalized_result.get("usage_percent") is not None:
+                return EvidenceStatus.COLLECTED, "high", ""
+            return EvidenceStatus.PARTIAL, "medium", "CPU 摘要缺少完整使用率，但返回了主机级辅助字段"
+        return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "未成功获取实时 CPU 摘要")
 
     if slot == "top_cpu_processes":
-        processes = normalized_result.get("processes")
-        if isinstance(processes, list) and processes:
+        if _top_cpu_processes_is_usable(normalized_result):
             return EvidenceStatus.COLLECTED, "high", ""
-        return EvidenceStatus.PARTIAL, "low", "未返回热点 CPU 进程"
+        return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "未成功获取热点 CPU 进程列表")
 
     if slot == "cpu_runbook":
         if normalized_result.get("content"):
             return EvidenceStatus.COLLECTED, "medium", ""
-        return EvidenceStatus.FAILED, "low", "未命中 CPU 排查 Runbook"
+        return EvidenceStatus.FAILED, "low", "未命中 CPU Runbook"
 
     return EvidenceStatus.PARTIAL, "unknown", ""
 
@@ -180,19 +246,25 @@ def update_cpu_evidence_store(
     )
 
 
-def _get_slot_payload(state: dict[str, Any], slot: str) -> dict[str, Any]:
+def _get_slot_record(state: dict[str, Any], slot: str) -> dict[str, Any]:
     evidence_store = dict(state.get("evidence_store") or {})
     payload = evidence_store.get(slot) or {}
     return payload if isinstance(payload, dict) else {}
 
 
+def _get_slot_payload(state: dict[str, Any], slot: str) -> dict[str, Any]:
+    return _get_slot_record(state, slot).get("payload") or {}
+
+
 def _required_missing_slots(state: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     for slot in REQUIRED_SLOT_ORDER:
-        payload = _get_slot_payload(state, slot)
-        status = str(payload.get("status") or EvidenceStatus.MISSING)
-        if status not in {EvidenceStatus.COLLECTED, EvidenceStatus.PARTIAL}:
-            missing.append(slot)
+        record = _get_slot_record(state, slot)
+        status = str(record.get("status") or EvidenceStatus.MISSING)
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if status != EvidenceStatus.COLLECTED:
+            if not isinstance(payload, dict) or not _slot_is_usable(slot, payload):
+                missing.append(slot)
     return missing
 
 
@@ -200,10 +272,10 @@ def build_follow_up_tasks(state: dict[str, Any]) -> list[dict[str, Any]]:
     follow_ups: list[dict[str, Any]] = []
     max_attempts = 2
     for slot in REQUIRED_SLOT_ORDER:
-        payload = _get_slot_payload(state, slot)
-        status = str(payload.get("status") or EvidenceStatus.MISSING)
-        attempts = int(payload.get("attempts") or 0)
-        if status in {EvidenceStatus.COLLECTED, EvidenceStatus.PARTIAL}:
+        record = _get_slot_record(state, slot)
+        attempts = int(record.get("attempts") or 0)
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if isinstance(payload, dict) and _slot_is_usable(slot, payload):
             continue
         if attempts >= max_attempts:
             continue
@@ -215,7 +287,7 @@ def build_follow_up_tasks(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "tool": tool_name,
                 "args": args,
                 "required": True,
-                "reason": f"补查缺失证据槽 {slot}。",
+                "reason": f"补查必需证据槽 {slot}，确认 CPU 运行状态。",
                 "evidence_type": slot,
             }
         )
@@ -230,11 +302,11 @@ def compute_cpu_no_progress_rounds(
 ) -> int:
     if not last_slot:
         return previous_no_progress_rounds
-    payload = evidence_store.get(last_slot) or {}
-    if not isinstance(payload, dict):
+    record = evidence_store.get(last_slot) or {}
+    if not isinstance(record, dict):
         return previous_no_progress_rounds + 1
-    status = str(payload.get("status") or EvidenceStatus.MISSING)
-    if status in {EvidenceStatus.FAILED, EvidenceStatus.MISSING}:
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    if not isinstance(payload, dict) or not _slot_is_usable(last_slot, payload):
         return previous_no_progress_rounds + 1
     return 0
 
@@ -257,8 +329,8 @@ def decide_cpu_stop(state: dict[str, Any]) -> StopDecision:
 
     exhausted_slots: list[str] = []
     for slot in missing_slots:
-        payload = evidence_store.get(slot) or {}
-        attempts = int(payload.get("attempts") or 0)
+        record = evidence_store.get(slot) or {}
+        attempts = int(record.get("attempts") or 0)
         if attempts >= max_attempts:
             exhausted_slots.append(slot)
 
@@ -309,7 +381,7 @@ def summarize_cpu_tool_result(tool_name: str, normalized_result: dict[str, Any])
             top_parts.append(
                 f"{item.get('process_name')} pid={item.get('pid')} cpu={item.get('cpu_percent')}%"
             )
-        return " | ".join(top_parts) if top_parts else "未返回热点 CPU 进程"
+        return " | ".join(top_parts) if top_parts else "未成功获取热点 CPU 进程列表"
     if tool_name == "retrieve_knowledge":
         content = str(normalized_result.get("content") or "").strip()
         return content[:160] if content else "未命中 CPU Runbook"
@@ -333,11 +405,11 @@ def summarize_cpu_evidence_store(evidence_store: dict[str, dict[str, Any]]) -> s
 
 
 def build_cpu_investigation_report(state: dict[str, Any]) -> str:
-    task_text = str(state.get("input") or "请检查系统当前 CPU 情况。")
+    task_text = str(state.get("input") or "请检查当前 CPU 情况")
 
-    summary_payload = _get_slot_payload(state, "cpu_summary").get("payload") or {}
-    process_payload = _get_slot_payload(state, "top_cpu_processes").get("payload") or {}
-    runbook_payload = _get_slot_payload(state, "cpu_runbook").get("payload") or {}
+    summary_payload = _get_slot_payload(state, "cpu_summary")
+    process_payload = _get_slot_payload(state, "top_cpu_processes")
+    runbook_payload = _get_slot_payload(state, "cpu_runbook")
 
     host = summary_payload.get("host") or "unknown-host"
     usage_percent = summary_payload.get("usage_percent")
@@ -347,13 +419,16 @@ def build_cpu_investigation_report(state: dict[str, Any]) -> str:
     status = summary_payload.get("status") or "unknown"
 
     facts: list[str] = []
-    if usage_percent is not None:
-        facts.append(f"- 主机 `{host}` 当前 CPU 使用率为 `{usage_percent}%`。")
+    if _cpu_summary_is_usable(summary_payload):
+        if usage_percent is not None:
+            facts.append(f"- 主机 `{host}` 的实时 CPU 使用率为 `{usage_percent}%`。")
+        else:
+            facts.append(f"- 已获取主机 `{host}` 的 CPU 辅助摘要，但未返回明确使用率。")
+        if any(value is not None for value in (load_1, load_5, load_15)):
+            facts.append(f"- 当前负载为 `load1={load_1}` / `load5={load_5}` / `load15={load_15}`。")
+        facts.append(f"- 当前 CPU 状态判定为 `{status}`。")
     else:
-        facts.append("- CPU 摘要未返回具体使用率。")
-    if load_1 is not None or load_5 is not None or load_15 is not None:
-        facts.append(f"- 当前负载为 `load1={load_1}` / `load5={load_5}` / `load15={load_15}`。")
-    facts.append(f"- 当前 CPU 状态标记为 `{status}`。")
+        facts.append("- 未成功获取实时 CPU 摘要。")
 
     processes = process_payload.get("processes") if isinstance(process_payload, dict) else []
     top_process_lines: list[str] = []
@@ -362,37 +437,39 @@ def build_cpu_investigation_report(state: dict[str, Any]) -> str:
             if not isinstance(item, dict):
                 continue
             top_process_lines.append(
-                f"- `{item.get('process_name')}` (pid={item.get('pid')})，CPU 占比 `{item.get('cpu_percent')}%`。"
+                f"- `{item.get('process_name')}` (pid={item.get('pid')}) 当前 CPU 占用 `{item.get('cpu_percent')}%`。"
             )
     else:
-        top_process_lines.append("- 当前未拿到热点 CPU 进程列表。")
+        top_process_lines.append("- 未成功获取热点 CPU 进程列表。")
 
     risk_lines: list[str] = []
     if usage_percent is not None and usage_percent >= 85:
-        risk_lines.append("- 当前 CPU 压力偏高，可能导致请求延迟升高、队列堆积或调度抖动。")
+        risk_lines.append("- CPU 压力较高，可能影响请求处理延迟、任务调度或批处理吞吐。")
     elif usage_percent is not None:
-        risk_lines.append("- 当前 CPU 水位未达到极高压力，但仍需关注热点进程是否持续占用。")
+        risk_lines.append("- 当前已拿到 CPU 水位，但仍需结合业务负载判断是否属于异常波动。")
     else:
-        risk_lines.append("- 由于缺少完整 CPU 摘要，当前只能给出有限风险判断。")
+        risk_lines.append("- 缺少实时 CPU 摘要，暂时无法判断是否存在主机级 CPU 压力。")
 
     gap_lines: list[str] = []
-    for slot in _required_missing_slots(state):
-        if slot == "cpu_summary":
-            gap_lines.append("- 未成功获取实时 CPU 摘要。")
-        elif slot == "top_cpu_processes":
-            gap_lines.append("- 未成功获取热点 CPU 进程列表。")
+    missing_slots = _required_missing_slots(state)
+    if "cpu_summary" in missing_slots:
+        gap_lines.append("- 未成功获取实时 CPU 摘要。")
+    if "top_cpu_processes" in missing_slots:
+        gap_lines.append("- 未成功获取热点 CPU 进程列表。")
     if not runbook_payload.get("content"):
-        gap_lines.append("- 未命中本地 CPU 排查 Runbook。")
+        gap_lines.append("- 未命中 CPU 排查 Runbook。")
+    if not gap_lines:
+        gap_lines.append("- 当前关键证据已覆盖第一版 CPU Profile 所需范围。")
 
     suggestion_lines = [
-        "- 先确认热点进程是否为预期业务进程，并检查是否存在批任务、压测或异常死循环。",
-        "- 如 CPU 长期高位，建议进一步排查线程池、并发参数、热点 SQL 或热点接口。",
-        "- 涉及重启、扩缩容、限流等风险操作前，应先完成业务影响评估与人工确认。",
+        "- 先确认业务高峰、批处理或定时任务是否与 CPU 抬升时间一致。",
+        "- 若热点进程明确，可继续核对其线程数、调用链或 SQL/缓存命中情况。",
+        "- 如需进一步处置，请在变更窗口内评估限流、扩容或参数调优。",
     ]
 
     warning_lines = [
-        "- 本报告未执行任何杀进程、重启、扩容或其他高风险操作。",
-        "- Runbook 仅作为参考，不应视为实时现场证据。",
+        "- 本次结论仅基于已采集的主机 CPU 证据和本地 Runbook 参考。",
+        "- 本轮未执行任何重启、限流或其他高风险操作。",
     ]
 
     runbook_lines = []
@@ -400,10 +477,7 @@ def build_cpu_investigation_report(state: dict[str, Any]) -> str:
     if runbook_content:
         runbook_lines.append(f"- 参考摘要：{runbook_content[:240]}")
     else:
-        runbook_lines.append("- 当前未命中可用的本地 CPU Runbook。")
-
-    if not gap_lines:
-        gap_lines.append("- 当前关键证据已覆盖第一版 CPU Profile 所需范围。")
+        runbook_lines.append("- 当前未获取到 CPU Runbook。")
 
     return dedent(
         f"""
@@ -411,7 +485,7 @@ def build_cpu_investigation_report(state: dict[str, Any]) -> str:
 
         ## 任务与对象
         - 任务：{task_text}
-        - 对象：主机 `{host}`
+        - 对象：`{host}`
 
         ## 已确认事实
         {chr(10).join(facts)}
@@ -456,28 +530,32 @@ def verify_cpu_investigation_report(state: dict[str, Any]) -> tuple[list[str], l
     ]
     for section in required_sections:
         if section not in report:
-            findings.append(f"报告缺少章节：{section}")
+            findings.append(f"报告缺少必要章节：{section}")
 
-    summary_payload = _get_slot_payload(state, "cpu_summary").get("payload") or {}
-    process_payload = _get_slot_payload(state, "top_cpu_processes").get("payload") or {}
+    summary_payload = _get_slot_payload(state, "cpu_summary")
+    process_payload = _get_slot_payload(state, "top_cpu_processes")
 
-    if summary_payload.get("usage_percent") is not None and f"{summary_payload.get('usage_percent')}%" not in report:
-        findings.append("报告未引用实际 CPU 使用率。")
-    if process_payload.get("processes"):
-        first = process_payload["processes"][0]
+    if _cpu_summary_is_usable(summary_payload):
+        usage_percent = summary_payload.get("usage_percent")
+        if usage_percent is not None and f"{usage_percent}%" not in report:
+            findings.append("报告未引用已获取的 CPU 使用率。")
+    else:
+        missing.append("cpu_summary")
+        if "未成功获取实时 CPU 摘要" not in report:
+            findings.append("报告未说明 CPU 摘要缺失。")
+
+    if _top_cpu_processes_is_usable(process_payload):
+        first = process_payload.get("processes")[0]
         if isinstance(first, dict):
             name = str(first.get("process_name") or "")
             if name and name not in report:
-                findings.append("报告未体现热点 CPU 进程。")
+                findings.append("报告未引用已获取的热点 CPU 进程。")
+    else:
+        missing.append("top_cpu_processes")
+        if "未成功获取热点 CPU 进程列表" not in report:
+            findings.append("报告未说明热点 CPU 进程列表缺失。")
 
-    if "Runbook 仅作为参考" not in report:
-        warnings.append("建议明确说明 Runbook 仅为参考。")
-
-    for slot in _required_missing_slots(state):
-        missing.append(slot)
-        if slot == "cpu_summary" and "未成功获取实时 CPU 摘要" not in report:
-            findings.append("报告未说明 CPU 摘要缺失。")
-        if slot == "top_cpu_processes" and "未成功获取热点 CPU 进程列表" not in report:
-            findings.append("报告未说明热点 CPU 进程缺失。")
+    if "本轮未执行任何重启、限流或其他高风险操作" not in report:
+        warnings.append("风险提示中缺少未执行高风险操作说明。")
 
     return findings, missing, warnings

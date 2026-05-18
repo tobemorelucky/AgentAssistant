@@ -13,6 +13,7 @@ CPU_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "cpu_engi
 RUNTIME_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "runtime.py"
 PATROL_DISPATCH_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "patrol_dispatch.py"
 DISK_CLEANUP_PATH = ROOT / "app" / "agent" / "aiops" / "disk_cleanup.py"
+DISK_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "disk_engine.py"
 
 
 def _load_module(module_name: str, path: Path):
@@ -38,6 +39,7 @@ models = _load_module("app.agent.aiops.investigation.models", MODELS_PATH)
 profiles = _load_module("app.agent.aiops.investigation.profiles", PROFILES_PATH)
 evidence = _load_module("app.agent.aiops.investigation.evidence", EVIDENCE_PATH)
 disk_cleanup = _load_module("app.agent.aiops.disk_cleanup", DISK_CLEANUP_PATH)
+disk_engine = _load_module("app.agent.aiops.investigation.disk_engine", DISK_ENGINE_PATH)
 memory_engine = _load_module("app.agent.aiops.investigation.memory_engine", MEMORY_ENGINE_PATH)
 cpu_engine = _load_module("app.agent.aiops.investigation.cpu_engine", CPU_ENGINE_PATH)
 runtime = _load_module("app.agent.aiops.investigation.runtime", RUNTIME_PATH)
@@ -72,7 +74,97 @@ def test_runtime_registry_exposes_memory_and_cpu_runtimes():
     ]
 
 
-def test_memory_profile_report_is_evidence_grounded():
+def test_cpu_summary_error_payload_is_failed():
+    store = evidence.build_evidence_store(profiles.get_profile("cpu_pressure_profile"))
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_summary",
+        tool_name="get_cpu_summary",
+        raw_result={"error": "Tool not found: get_cpu_summary"},
+    )
+    assert store["cpu_summary"]["status"] == models.EvidenceStatus.FAILED
+    assert "Tool not found" in store["cpu_summary"]["error_message"]
+
+
+def test_top_cpu_processes_error_payload_is_failed():
+    store = evidence.build_evidence_store(profiles.get_profile("cpu_pressure_profile"))
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="top_cpu_processes",
+        tool_name="list_top_cpu_processes",
+        raw_result={"error": "Tool not found: list_top_cpu_processes"},
+    )
+    assert store["top_cpu_processes"]["status"] == models.EvidenceStatus.FAILED
+
+
+def test_cpu_report_with_missing_required_evidence_shows_gaps():
+    store = evidence.build_evidence_store(profiles.get_profile("cpu_pressure_profile"))
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_summary",
+        tool_name="get_cpu_summary",
+        raw_result={"error": "Tool not found: get_cpu_summary"},
+    )
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="top_cpu_processes",
+        tool_name="list_top_cpu_processes",
+        raw_result={"error": "Tool not found: list_top_cpu_processes"},
+    )
+    report = cpu_engine.build_cpu_investigation_report(
+        _state("系统现在 CPU 情况如何？", "cpu_pressure_profile", store)
+    )
+    assert "未成功获取实时 CPU 摘要" in report
+    assert "未成功获取热点 CPU 进程列表" in report
+    assert "当前关键证据已覆盖第一版 CPU Profile 所需范围" not in report
+
+
+def test_memory_summary_error_payload_is_failed():
+    store = evidence.build_evidence_store(profiles.get_profile("memory_pressure_profile"))
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="memory_summary",
+        tool_name="get_memory_summary",
+        raw_result={"error": "Tool not found: get_memory_summary"},
+    )
+    assert store["memory_summary"]["status"] == models.EvidenceStatus.FAILED
+    assert "Tool not found" in store["memory_summary"]["error_message"]
+
+
+def test_top_memory_processes_error_payload_is_failed():
+    store = evidence.build_evidence_store(profiles.get_profile("memory_pressure_profile"))
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="top_memory_processes",
+        tool_name="list_top_memory_processes",
+        raw_result={"error": "Tool not found: list_top_memory_processes"},
+    )
+    assert store["top_memory_processes"]["status"] == models.EvidenceStatus.FAILED
+
+
+def test_memory_report_with_missing_required_evidence_shows_gaps():
+    store = evidence.build_evidence_store(profiles.get_profile("memory_pressure_profile"))
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="memory_summary",
+        tool_name="get_memory_summary",
+        raw_result={"error": "Tool not found: get_memory_summary"},
+    )
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="top_memory_processes",
+        tool_name="list_top_memory_processes",
+        raw_result={"error": "Tool not found: list_top_memory_processes"},
+    )
+    report = memory_engine.build_memory_investigation_report(
+        _state("系统现在内存情况如何？", "memory_pressure_profile", store)
+    )
+    assert "未成功获取实时内存摘要" in report
+    assert "未成功获取热点内存进程列表" in report
+    assert "当前关键证据已覆盖第一版 Memory Profile 所需范围" not in report
+
+
+def test_memory_profile_report_is_evidence_grounded_with_real_values():
     store = evidence.build_evidence_store(profiles.get_profile("memory_pressure_profile"))
     memory_engine.update_memory_evidence_store(
         store,
@@ -108,7 +200,46 @@ def test_memory_profile_report_is_evidence_grounded():
     assert "AIOps 内存诊断报告" in report
     assert "76.4%" in report
     assert "python" in report
-    assert "Runbook 仅作为参考" in report
+
+
+def test_cpu_profile_can_finalize_with_real_results():
+    store = evidence.build_evidence_store(profiles.get_profile("cpu_pressure_profile"))
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_summary",
+        tool_name="get_cpu_summary",
+        raw_result={
+            "ok": True,
+            "host": "vm-01",
+            "usage_percent": 61.5,
+            "cores": 8,
+            "load_1": 1.2,
+            "load_5": 0.9,
+            "load_15": 0.8,
+            "source": "remote_host",
+        },
+    )
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="top_cpu_processes",
+        tool_name="list_top_cpu_processes",
+        raw_result={
+            "ok": True,
+            "processes": [
+                {"pid": 2001, "process_name": "python", "cpu_percent": 38.4},
+                {"pid": 2002, "process_name": "nginx", "cpu_percent": 11.2},
+            ],
+            "source": "remote_host",
+        },
+    )
+    decision = cpu_engine.decide_cpu_stop(
+        {
+            **_state("系统现在 CPU 情况如何？", "cpu_pressure_profile", store),
+            "investigation_round": 1,
+            "no_progress_rounds": 0,
+        }
+    )
+    assert decision.decision == models.StopDecisionType.FINALIZE
 
 
 def test_cpu_profile_finalizes_with_limitations_when_required_evidence_keeps_failing():
@@ -118,13 +249,13 @@ def test_cpu_profile_finalizes_with_limitations_when_required_evidence_keeps_fai
             store,
             slot="cpu_summary",
             tool_name="get_cpu_summary",
-            raw_result={"ok": False, "message": "unavailable", "source": "remote_host"},
+            raw_result={"error": "Tool not found: get_cpu_summary"},
         )
         cpu_engine.update_cpu_evidence_store(
             store,
             slot="top_cpu_processes",
             tool_name="list_top_cpu_processes",
-            raw_result={"ok": False, "message": "unsupported", "source": "remote_host"},
+            raw_result={"error": "Tool not found: list_top_cpu_processes"},
         )
 
     decision = cpu_engine.decide_cpu_stop(
@@ -139,8 +270,8 @@ def test_cpu_profile_finalizes_with_limitations_when_required_evidence_keeps_fai
 
 
 def test_patrol_dispatch_maps_cpu_and_memory_alerts():
-    cpu_alert = {"alert_name": "HighCPUUsage", "service_name": "svc-a", "severity": "critical"}
-    memory_alert = {"alert_name": "MemoryPressure", "service_name": "svc-b", "severity": "high"}
+    cpu_alert = {"alert_name": "HighCPUUsage", "severity": "critical"}
+    memory_alert = {"alert_name": "MemoryPressure", "severity": "high"}
 
     assert patrol_dispatch.resolve_alert_profile_id(cpu_alert) == "cpu_pressure_profile"
     assert patrol_dispatch.resolve_alert_profile_id(memory_alert) == "memory_pressure_profile"

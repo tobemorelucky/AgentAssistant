@@ -37,6 +37,57 @@ def _status_from_usage(usage_percent: float | None) -> str:
     return "healthy"
 
 
+def _failure_result(message: str, *, error_code: str, source: str = "unknown") -> dict[str, Any]:
+    return {
+        "ok": False,
+        "source": source or "unknown",
+        "message": message,
+        "error_code": error_code,
+    }
+
+
+def _is_error_payload(payload: dict[str, Any]) -> bool:
+    if not payload:
+        return True
+    if payload.get("ok") is False:
+        return True
+    if payload.get("error"):
+        return True
+    if payload.get("error_code"):
+        return True
+    return False
+
+
+def _memory_summary_is_usable(normalized_result: dict[str, Any]) -> bool:
+    if normalized_result.get("ok") is False:
+        return False
+    if normalized_result.get("usage_percent") is not None:
+        return True
+    host = str(normalized_result.get("host") or "")
+    has_capacity = any(
+        normalized_result.get(key) is not None
+        for key in ("used_gb", "total_gb", "available_gb", "swap_total_gb", "swap_used_gb")
+    )
+    return host not in {"", "unknown-host"} and has_capacity
+
+
+def _top_memory_processes_is_usable(normalized_result: dict[str, Any]) -> bool:
+    if normalized_result.get("ok") is False:
+        return False
+    processes = normalized_result.get("processes")
+    return isinstance(processes, list) and len(processes) > 0
+
+
+def _slot_is_usable(slot: str, normalized_result: dict[str, Any]) -> bool:
+    if slot == "memory_summary":
+        return _memory_summary_is_usable(normalized_result)
+    if slot == "top_memory_processes":
+        return _top_memory_processes_is_usable(normalized_result)
+    if slot == "memory_runbook":
+        return bool(str(normalized_result.get("content") or "").strip())
+    return normalized_result.get("ok") is not False
+
+
 def build_initial_memory_tasks() -> list[dict[str, Any]]:
     return [
         {
@@ -44,7 +95,7 @@ def build_initial_memory_tasks() -> list[dict[str, Any]]:
             "tool": "get_memory_summary",
             "args": {},
             "required": True,
-            "reason": "确认当前主机的内存总量、已用量、可用量和使用率。",
+            "reason": "获取当前主机内存实时摘要，确认整体内存水位和剩余容量。",
             "evidence_type": "memory_summary",
         },
         {
@@ -52,7 +103,7 @@ def build_initial_memory_tasks() -> list[dict[str, Any]]:
             "tool": "list_top_memory_processes",
             "args": {"limit": 10},
             "required": True,
-            "reason": "定位当前最主要的内存消耗进程。",
+            "reason": "获取热点内存进程列表，识别当前主要内存压力来源。",
             "evidence_type": "top_memory_processes",
         },
         {
@@ -60,22 +111,22 @@ def build_initial_memory_tasks() -> list[dict[str, Any]]:
             "tool": "retrieve_knowledge",
             "args": {"query": MEMORY_RUNBOOK_QUERY},
             "required": False,
-            "reason": "补充内存排查 Runbook 作为参考建议。",
+            "reason": "检索内存排查 Runbook，补充处置建议和风险提示。",
             "evidence_type": "memory_runbook",
         },
     ]
 
 
 def normalize_memory_tool_result(tool_name: str, raw_result: Any) -> dict[str, Any]:
+    payload = dict(raw_result) if isinstance(raw_result, dict) else {}
+
     if tool_name == "get_memory_summary":
-        payload = dict(raw_result) if isinstance(raw_result, dict) else {}
-        if payload.get("ok") is False:
-            return {
-                "ok": False,
-                "source": payload.get("source") or "unknown",
-                "message": str(payload.get("message") or "内存摘要获取失败"),
-                "error_code": str(payload.get("error_code") or "memory_summary_error"),
-            }
+        if _is_error_payload(payload):
+            return _failure_result(
+                str(payload.get("message") or payload.get("error") or "未成功获取实时内存摘要"),
+                error_code=str(payload.get("error_code") or "tool_execution_error"),
+                source=str(payload.get("source") or "unknown"),
+            )
         usage_percent = _to_float(payload.get("usage_percent"))
         total_gb = _to_float(payload.get("total_gb"))
         used_gb = _to_float(payload.get("used_gb"))
@@ -94,20 +145,26 @@ def normalize_memory_tool_result(tool_name: str, raw_result: Any) -> dict[str, A
             "status": payload.get("status") or _status_from_usage(usage_percent),
             "source": payload.get("source") or "unknown",
         }
+        if not _memory_summary_is_usable(result):
+            return _failure_result(
+                "未成功获取有效内存摘要字段",
+                error_code="invalid_memory_summary",
+                source=str(result.get("source") or "unknown"),
+            )
         return result
 
     if tool_name == "list_top_memory_processes":
-        payload = dict(raw_result) if isinstance(raw_result, dict) else {}
-        if payload.get("ok") is False:
-            return {
-                "ok": False,
-                "source": payload.get("source") or "unknown",
-                "message": str(payload.get("message") or "内存热点进程获取失败"),
-                "error_code": str(payload.get("error_code") or "top_memory_processes_error"),
-            }
+        if _is_error_payload(payload):
+            return _failure_result(
+                str(payload.get("message") or payload.get("error") or "未成功获取热点内存进程列表"),
+                error_code=str(payload.get("error_code") or "tool_execution_error"),
+                source=str(payload.get("source") or "unknown"),
+            )
+
         processes_raw = payload.get("processes")
         if not isinstance(processes_raw, list):
             processes_raw = raw_result if isinstance(raw_result, list) else []
+
         processes: list[dict[str, Any]] = []
         for item in processes_raw:
             if not isinstance(item, dict):
@@ -129,10 +186,12 @@ def normalize_memory_tool_result(tool_name: str, raw_result: Any) -> dict[str, A
                     "source": item.get("source") or payload.get("source") or "unknown",
                 }
             )
+
         return {
             "ok": True,
             "processes": processes,
-            "limit": int(payload.get("limit") or len(processes)),
+            "limit": int(payload.get("limit") or len(processes) or 0),
+            "message": "" if processes else "未成功获取热点内存进程列表",
             "source": payload.get("source") or "unknown",
         }
 
@@ -155,20 +214,21 @@ def _result_quality(slot: str, normalized_result: dict[str, Any]) -> tuple[Evide
         return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "工具执行失败")
 
     if slot == "memory_summary":
-        if normalized_result.get("usage_percent") is not None:
-            return EvidenceStatus.COLLECTED, "high", ""
-        return EvidenceStatus.PARTIAL, "low", "内存摘要未返回具体使用率"
+        if _memory_summary_is_usable(normalized_result):
+            if normalized_result.get("usage_percent") is not None:
+                return EvidenceStatus.COLLECTED, "high", ""
+            return EvidenceStatus.PARTIAL, "medium", "内存摘要缺少使用率，但返回了容量辅助字段"
+        return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "未成功获取实时内存摘要")
 
     if slot == "top_memory_processes":
-        processes = normalized_result.get("processes")
-        if isinstance(processes, list) and processes:
+        if _top_memory_processes_is_usable(normalized_result):
             return EvidenceStatus.COLLECTED, "high", ""
-        return EvidenceStatus.PARTIAL, "low", "未返回热点内存进程"
+        return EvidenceStatus.FAILED, "low", str(normalized_result.get("message") or "未成功获取热点内存进程列表")
 
     if slot == "memory_runbook":
         if normalized_result.get("content"):
             return EvidenceStatus.COLLECTED, "medium", ""
-        return EvidenceStatus.FAILED, "low", "未命中内存排查 Runbook"
+        return EvidenceStatus.FAILED, "low", "未命中内存 Runbook"
 
     return EvidenceStatus.PARTIAL, "unknown", ""
 
@@ -193,19 +253,25 @@ def update_memory_evidence_store(
     )
 
 
-def _get_slot_payload(state: dict[str, Any], slot: str) -> dict[str, Any]:
+def _get_slot_record(state: dict[str, Any], slot: str) -> dict[str, Any]:
     evidence_store = dict(state.get("evidence_store") or {})
     payload = evidence_store.get(slot) or {}
     return payload if isinstance(payload, dict) else {}
 
 
+def _get_slot_payload(state: dict[str, Any], slot: str) -> dict[str, Any]:
+    return _get_slot_record(state, slot).get("payload") or {}
+
+
 def _required_missing_slots(state: dict[str, Any]) -> list[str]:
     missing: list[str] = []
     for slot in REQUIRED_SLOT_ORDER:
-        payload = _get_slot_payload(state, slot)
-        status = str(payload.get("status") or EvidenceStatus.MISSING)
-        if status not in {EvidenceStatus.COLLECTED, EvidenceStatus.PARTIAL}:
-            missing.append(slot)
+        record = _get_slot_record(state, slot)
+        status = str(record.get("status") or EvidenceStatus.MISSING)
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if status != EvidenceStatus.COLLECTED:
+            if not isinstance(payload, dict) or not _slot_is_usable(slot, payload):
+                missing.append(slot)
     return missing
 
 
@@ -213,10 +279,10 @@ def build_follow_up_tasks(state: dict[str, Any]) -> list[dict[str, Any]]:
     follow_ups: list[dict[str, Any]] = []
     max_attempts = 2
     for slot in REQUIRED_SLOT_ORDER:
-        payload = _get_slot_payload(state, slot)
-        status = str(payload.get("status") or EvidenceStatus.MISSING)
-        attempts = int(payload.get("attempts") or 0)
-        if status in {EvidenceStatus.COLLECTED, EvidenceStatus.PARTIAL}:
+        record = _get_slot_record(state, slot)
+        attempts = int(record.get("attempts") or 0)
+        payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+        if isinstance(payload, dict) and _slot_is_usable(slot, payload):
             continue
         if attempts >= max_attempts:
             continue
@@ -228,7 +294,7 @@ def build_follow_up_tasks(state: dict[str, Any]) -> list[dict[str, Any]]:
                 "tool": tool_name,
                 "args": args,
                 "required": True,
-                "reason": f"补查缺失证据槽 {slot}。",
+                "reason": f"补查必需证据槽 {slot}，确认内存运行状态。",
                 "evidence_type": slot,
             }
         )
@@ -243,11 +309,11 @@ def compute_memory_no_progress_rounds(
 ) -> int:
     if not last_slot:
         return previous_no_progress_rounds
-    payload = evidence_store.get(last_slot) or {}
-    if not isinstance(payload, dict):
+    record = evidence_store.get(last_slot) or {}
+    if not isinstance(record, dict):
         return previous_no_progress_rounds + 1
-    status = str(payload.get("status") or EvidenceStatus.MISSING)
-    if status in {EvidenceStatus.FAILED, EvidenceStatus.MISSING}:
+    payload = record.get("payload") if isinstance(record.get("payload"), dict) else {}
+    if not isinstance(payload, dict) or not _slot_is_usable(last_slot, payload):
         return previous_no_progress_rounds + 1
     return 0
 
@@ -270,8 +336,8 @@ def decide_memory_stop(state: dict[str, Any]) -> StopDecision:
 
     exhausted_slots: list[str] = []
     for slot in missing_slots:
-        payload = evidence_store.get(slot) or {}
-        attempts = int(payload.get("attempts") or 0)
+        record = evidence_store.get(slot) or {}
+        attempts = int(record.get("attempts") or 0)
         if attempts >= max_attempts:
             exhausted_slots.append(slot)
 
@@ -323,7 +389,7 @@ def summarize_memory_tool_result(tool_name: str, normalized_result: dict[str, An
                 f"{item.get('process_name')} pid={item.get('pid')} "
                 f"mem={item.get('memory_percent')}% rss={item.get('rss_gb')}GB"
             )
-        return " | ".join(top_parts) if top_parts else "未返回热点内存进程"
+        return " | ".join(top_parts) if top_parts else "未成功获取热点内存进程列表"
     if tool_name == "retrieve_knowledge":
         content = str(normalized_result.get("content") or "").strip()
         return content[:160] if content else "未命中内存 Runbook"
@@ -347,12 +413,11 @@ def summarize_memory_evidence_store(evidence_store: dict[str, dict[str, Any]]) -
 
 
 def build_memory_investigation_report(state: dict[str, Any]) -> str:
-    evidence_store = dict(state.get("evidence_store") or {})
-    task_text = str(state.get("input") or "请检查系统当前内存情况。")
+    task_text = str(state.get("input") or "请检查当前内存情况")
 
-    summary_payload = _get_slot_payload(state, "memory_summary").get("payload") or {}
-    process_payload = _get_slot_payload(state, "top_memory_processes").get("payload") or {}
-    runbook_payload = _get_slot_payload(state, "memory_runbook").get("payload") or {}
+    summary_payload = _get_slot_payload(state, "memory_summary")
+    process_payload = _get_slot_payload(state, "top_memory_processes")
+    runbook_payload = _get_slot_payload(state, "memory_runbook")
 
     host = summary_payload.get("host") or "unknown-host"
     usage_percent = summary_payload.get("usage_percent")
@@ -362,13 +427,18 @@ def build_memory_investigation_report(state: dict[str, Any]) -> str:
     status = summary_payload.get("status") or "unknown"
 
     facts: list[str] = []
-    if usage_percent is not None:
-        facts.append(f"- 主机 `{host}` 当前内存使用率为 `{usage_percent}%`，已用 `{used_gb}GB` / 总量 `{total_gb}GB`。")
+    if _memory_summary_is_usable(summary_payload):
+        if usage_percent is not None:
+            facts.append(
+                f"- 主机 `{host}` 的实时内存使用率为 `{usage_percent}%`，已使用 `{used_gb}GB` / 总量 `{total_gb}GB`。"
+            )
+        else:
+            facts.append(f"- 已获取主机 `{host}` 的内存容量摘要，但未返回明确使用率。")
+        if available_gb is not None:
+            facts.append(f"- 当前可用内存约为 `{available_gb}GB`。")
+        facts.append(f"- 当前内存状态判定为 `{status}`。")
     else:
-        facts.append("- 内存摘要未返回具体使用率。")
-    if available_gb is not None:
-        facts.append(f"- 当前可用内存约 `{available_gb}GB`。")
-    facts.append(f"- 当前内存状态标记为 `{status}`。")
+        facts.append("- 未成功获取实时内存摘要。")
 
     processes = process_payload.get("processes") if isinstance(process_payload, dict) else []
     top_process_lines: list[str] = []
@@ -377,38 +447,39 @@ def build_memory_investigation_report(state: dict[str, Any]) -> str:
             if not isinstance(item, dict):
                 continue
             top_process_lines.append(
-                f"- `{item.get('process_name')}` (pid={item.get('pid')}), "
-                f"内存占比 `{item.get('memory_percent')}%`，RSS 约 `{item.get('rss_gb')}GB`。"
+                f"- `{item.get('process_name')}` (pid={item.get('pid')}) 内存占用 `{item.get('memory_percent')}%`，RSS 约 `{item.get('rss_gb')}GB`。"
             )
     else:
-        top_process_lines.append("- 当前未拿到热点内存进程列表。")
+        top_process_lines.append("- 未成功获取热点内存进程列表。")
 
     risk_lines: list[str] = []
     if usage_percent is not None and usage_percent >= 85:
-        risk_lines.append("- 当前内存水位偏高，可能导致频繁回收、申请失败或触发 OOM。")
+        risk_lines.append("- 内存压力较高，可能引发 OOM、缓存抖动或应用响应变慢。")
     elif usage_percent is not None:
-        risk_lines.append("- 当前内存水位未达到极高压力，但仍需关注热点进程是否持续增长。")
+        risk_lines.append("- 当前已拿到内存水位，但仍需结合业务负载判断是否属于异常增长。")
     else:
-        risk_lines.append("- 由于缺少完整内存摘要，当前只能给出有限风险判断。")
+        risk_lines.append("- 缺少实时内存摘要，暂时无法判断是否存在主机级内存压力。")
 
     gap_lines: list[str] = []
-    for slot in _required_missing_slots(state):
-        if slot == "memory_summary":
-            gap_lines.append("- 未成功获取实时内存摘要。")
-        elif slot == "top_memory_processes":
-            gap_lines.append("- 未成功获取热点内存进程列表。")
+    missing_slots = _required_missing_slots(state)
+    if "memory_summary" in missing_slots:
+        gap_lines.append("- 未成功获取实时内存摘要。")
+    if "top_memory_processes" in missing_slots:
+        gap_lines.append("- 未成功获取热点内存进程列表。")
     if not runbook_payload.get("content"):
-        gap_lines.append("- 未命中本地内存排查 Runbook。")
+        gap_lines.append("- 未命中内存排查 Runbook。")
+    if not gap_lines:
+        gap_lines.append("- 当前关键证据已覆盖第一版 Memory Profile 所需范围。")
 
     suggestion_lines = [
-        "- 先确认热点进程是否为预期业务进程，并检查其工作负载是否异常放大。",
-        "- 若内存持续高位运行，建议结合应用侧缓存、批处理、并发参数进行容量或限流调整。",
-        "- 涉及重启、缩容、清理缓存等风险操作前，应先完成业务影响评估与人工确认。",
+        "- 先确认业务高峰、批处理或缓存膨胀是否与内存抬升时间一致。",
+        "- 若热点进程明确，可继续核对对象缓存、连接池或大查询返回集。",
+        "- 如需进一步处置，请在变更窗口内评估限流、扩容或参数调优。",
     ]
 
     warning_lines = [
-        "- 本报告未执行任何重启、杀进程、清缓存或其他高风险操作。",
-        "- Runbook 仅作为参考，不应视为实时现场证据。",
+        "- 本次结论仅基于已采集的主机内存证据和本地 Runbook 参考。",
+        "- 本轮未执行任何重启、清缓存或其他高风险操作。",
     ]
 
     runbook_lines = []
@@ -416,10 +487,7 @@ def build_memory_investigation_report(state: dict[str, Any]) -> str:
     if runbook_content:
         runbook_lines.append(f"- 参考摘要：{runbook_content[:240]}")
     else:
-        runbook_lines.append("- 当前未命中可用的本地内存 Runbook。")
-
-    if not gap_lines:
-        gap_lines.append("- 当前关键证据已覆盖第一版 Memory Profile 所需范围。")
+        runbook_lines.append("- 当前未获取到内存 Runbook。")
 
     return dedent(
         f"""
@@ -427,7 +495,7 @@ def build_memory_investigation_report(state: dict[str, Any]) -> str:
 
         ## 任务与对象
         - 任务：{task_text}
-        - 对象：主机 `{host}`
+        - 对象：`{host}`
 
         ## 已确认事实
         {chr(10).join(facts)}
@@ -472,28 +540,32 @@ def verify_memory_investigation_report(state: dict[str, Any]) -> tuple[list[str]
     ]
     for section in required_sections:
         if section not in report:
-            findings.append(f"报告缺少章节：{section}")
+            findings.append(f"报告缺少必要章节：{section}")
 
-    summary_payload = _get_slot_payload(state, "memory_summary").get("payload") or {}
-    process_payload = _get_slot_payload(state, "top_memory_processes").get("payload") or {}
+    summary_payload = _get_slot_payload(state, "memory_summary")
+    process_payload = _get_slot_payload(state, "top_memory_processes")
 
-    if summary_payload.get("usage_percent") is not None and f"{summary_payload.get('usage_percent')}%" not in report:
-        findings.append("报告未引用实际内存使用率。")
-    if process_payload.get("processes"):
-        first = process_payload["processes"][0]
+    if _memory_summary_is_usable(summary_payload):
+        usage_percent = summary_payload.get("usage_percent")
+        if usage_percent is not None and f"{usage_percent}%" not in report:
+            findings.append("报告未引用已获取的内存使用率。")
+    else:
+        missing.append("memory_summary")
+        if "未成功获取实时内存摘要" not in report:
+            findings.append("报告未说明内存摘要缺失。")
+
+    if _top_memory_processes_is_usable(process_payload):
+        first = process_payload.get("processes")[0]
         if isinstance(first, dict):
             name = str(first.get("process_name") or "")
             if name and name not in report:
-                findings.append("报告未体现热点内存进程。")
+                findings.append("报告未引用已获取的热点内存进程。")
+    else:
+        missing.append("top_memory_processes")
+        if "未成功获取热点内存进程列表" not in report:
+            findings.append("报告未说明热点内存进程列表缺失。")
 
-    if "Runbook 仅作为参考" not in report:
-        warnings.append("建议明确说明 Runbook 仅为参考。")
-
-    for slot in _required_missing_slots(state):
-        missing.append(slot)
-        if slot == "memory_summary" and "未成功获取实时内存摘要" not in report:
-            findings.append("报告未说明内存摘要缺失。")
-        if slot == "top_memory_processes" and "未成功获取热点内存进程列表" not in report:
-            findings.append("报告未说明热点内存进程缺失。")
+    if "本轮未执行任何重启、清缓存或其他高风险操作" not in report:
+        warnings.append("风险提示中缺少未执行高风险操作说明。")
 
     return findings, missing, warnings

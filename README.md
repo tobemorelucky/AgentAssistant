@@ -445,3 +445,12 @@ AIOPS_REMOTE_HOST_TOKEN=
 详细工程化改动见：
 
 - `Changelog/2026-05-05-aiops-agent-platform.md`
+ 
+## Tool Policy Maintenance
+
+- `tool_policy.yaml` defaults unknown tools to `blocked`.
+- Whenever a new AIOps MCP tool is added, especially a read-only monitoring tool, update `tool_policy.yaml` in the same change.
+- If a debug script can call an MCP tool successfully but the web Agent cannot, check:
+  - whether the tool name exists in `tool_policy.yaml`
+  - whether its level is `read_only` or `low_risk`
+  - whether the backend service has been restarted after the policy update

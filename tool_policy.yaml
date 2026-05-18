@@ -23,6 +23,8 @@ tools:
     level: read_only
   list_active_alerts:
     level: read_only
+  get_patrol_alerts:
+    level: read_only
   query_process_list:
     level: read_only
   search_historical_tickets:
@@ -30,6 +32,14 @@ tools:
   get_service_info:
     level: read_only
   list_all_services:
+    level: read_only
+  get_memory_summary:
+    level: read_only
+  list_top_memory_processes:
+    level: read_only
+  get_cpu_summary:
+    level: read_only
+  list_top_cpu_processes:
     level: read_only
   get_disk_usage:
     level: read_only

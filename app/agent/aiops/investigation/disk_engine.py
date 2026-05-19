@@ -6,6 +6,7 @@ from textwrap import dedent
 from typing import Any
 
 from app.agent.aiops.disk_cleanup import normalize_disk_tool_result, summarize_disk_tool_result
+from app.agent.aiops.utils import normalize_external_reference_result
 
 from .evidence import record_evidence_attempt
 from .models import EvidenceStatus, InvestigationTask, StopDecision, StopDecisionType
@@ -182,15 +183,8 @@ def update_disk_evidence_store(
             "message": raw_result.get("message") or raw_result.get("error") or "",
             "error_code": raw_result.get("error_code") or ("tool_execution_error" if raw_result.get("error") else ""),
         }
-    if slot == "external_reference" and isinstance(raw_result, dict):
-        normalized = {
-            "ok": bool(str(raw_result.get("content") or "").strip()),
-            "content": raw_result.get("content") or "",
-            "artifacts": raw_result.get("artifacts") or [],
-            "source": "external_reference",
-            "message": raw_result.get("message") or raw_result.get("error") or "",
-            "error_code": raw_result.get("error_code") or ("invalid_external_reference" if not raw_result.get("content") else ""),
-        }
+    if slot == "external_reference":
+        normalized = normalize_external_reference_result(raw_result)
     status, quality, error_message = _status_quality_error(slot, normalized)
     return record_evidence_attempt(
         evidence_store,

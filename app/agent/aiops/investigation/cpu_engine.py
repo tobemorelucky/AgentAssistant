@@ -7,6 +7,7 @@ from typing import Any
 
 from .evidence import record_evidence_attempt
 from .models import EvidenceStatus, StopDecision, StopDecisionType
+from ..utils import normalize_external_reference_result
 
 
 CPU_PRESSURE_PROFILE_ID = "cpu_pressure_profile"
@@ -240,23 +241,7 @@ def normalize_cpu_tool_result(tool_name: str, raw_result: Any) -> dict[str, Any]
         }
 
     if tool_name == "web_search":
-        if isinstance(raw_result, dict):
-            content = str(raw_result.get("content") or "").strip()
-            artifacts = raw_result.get("artifacts") or []
-            return {
-                "ok": bool(content),
-                "content": content,
-                "artifacts": artifacts,
-                "source": "external_reference",
-            }
-        return {
-            "ok": False,
-            "content": "",
-            "artifacts": [],
-            "source": "external_reference",
-            "message": "web_search did not return a structured payload.",
-            "error_code": "invalid_external_reference",
-        }
+        return normalize_external_reference_result(raw_result)
 
     return {"ok": True, "source": "unknown", "payload": raw_result}
 

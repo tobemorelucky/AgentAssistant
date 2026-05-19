@@ -14,6 +14,7 @@ from app.agent.aiops.disk_cleanup import (
     extract_disk_tools_from_steps,
     is_disk_cleanup_request,
 )
+from app.agent.aiops.followup_report import build_followup_enrichment_report
 from app.agent.aiops.investigation import StopDecision, StopDecisionType, get_runtime
 from app.agent.aiops.investigation.evidence import build_evidence_store
 from app.agent.aiops.investigation.profiles import get_profile
@@ -37,6 +38,11 @@ LEGACY_GENERIC_PLAN_SOURCES = {
     "generic_template_fallback",
     "controlled_no_profile",
     "legacy_generic_disabled",
+}
+
+FOLLOWUP_ENRICHMENT_PLAN_SOURCES = {
+    "followup_local_enrichment",
+    "followup_external_enrichment",
 }
 
 
@@ -393,6 +399,27 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                     status="success",
                     title=f"{selected_profile.get('profile_id')} report drafted",
                     result_summary=runtime.summarize_evidence_store(state_for_runtime),
+                )
+            ],
+        }
+
+    if runtime is not None and plan_source in FOLLOWUP_ENRICHMENT_PLAN_SOURCES:
+        response = build_followup_enrichment_report(dict(state))
+        decision = StopDecision(
+            decision=StopDecisionType.FINALIZE,
+            reason="Follow-up enrichment gathered additional contextual references.",
+        )
+        return {
+            "response": response,
+            "plan": [],
+            "stop_decision": _model_to_dict(decision),
+            "trace_events": [
+                create_trace_event(
+                    session_id=session_id,
+                    node="replanner",
+                    status="success",
+                    title="Follow-up enrichment report drafted",
+                    result_summary=plan_source,
                 )
             ],
         }

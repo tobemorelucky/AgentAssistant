@@ -36,6 +36,15 @@ DEFAULT_AIOPS_TASK = (
     "本地知识库和 Runbook 继续排查，并明确标注证据边界与风险提示。"
 )
 
+FOLLOWUP_DIRECT_RESPONSE_PLAN_SOURCES = {
+    "followup_missing_context",
+    "followup_clarification",
+    "followup_previous_context",
+    "followup_external_unavailable",
+    "followup_local_enrichment",
+    "followup_external_enrichment",
+}
+
 class AIOpsService:
     """Governed AIOps Agent platform service."""
 
@@ -119,6 +128,8 @@ class AIOpsService:
             "patrol_dispatch_unsupported_profile",
         }:
             return END
+        if state.get("response") and state.get("plan_source") in FOLLOWUP_DIRECT_RESPONSE_PLAN_SOURCES:
+            return END
         if state.get("response"):
             return NODE_VERIFIER
         if state.get("plan"):
@@ -128,6 +139,8 @@ class AIOpsService:
     @staticmethod
     def _after_replanner(state: PlanExecuteState) -> str:
         if state.get("status") == "paused":
+            return END
+        if state.get("response") and state.get("plan_source") in FOLLOWUP_DIRECT_RESPONSE_PLAN_SOURCES:
             return END
         if state.get("response"):
             return NODE_VERIFIER

@@ -82,6 +82,67 @@ def unwrap_tool_result(value: Any) -> Any:
     return value
 
 
+def normalize_external_reference_result(raw_result: Any) -> dict[str, Any]:
+    """Normalize web/external search results into a stable structured payload."""
+    parsed = unwrap_tool_result(raw_result)
+
+    if isinstance(parsed, dict):
+        if parsed.get("ok") is False or parsed.get("error") or parsed.get("error_code"):
+            return {
+                "ok": False,
+                "content": str(parsed.get("content") or "").strip(),
+                "artifacts": _coerce_external_artifacts(parsed.get("artifacts") or parsed.get("results") or []),
+                "source": "external_reference",
+                "message": str(parsed.get("message") or parsed.get("error") or "External search failed."),
+                "error_code": str(parsed.get("error_code") or "external_reference_error"),
+            }
+
+        content = str(parsed.get("content") or parsed.get("answer") or "").strip()
+        artifacts = _coerce_external_artifacts(parsed.get("artifacts") or parsed.get("results") or [])
+        if not content and artifacts:
+            content = _artifacts_to_content(artifacts)
+        return {
+            "ok": bool(content or artifacts),
+            "content": content,
+            "artifacts": artifacts,
+            "source": "external_reference",
+            "message": "" if (content or artifacts) else "External search returned no usable content.",
+            "error_code": "" if (content or artifacts) else "invalid_external_reference",
+        }
+
+    if isinstance(parsed, str):
+        content = parsed.strip()
+        return {
+            "ok": bool(content),
+            "content": content,
+            "artifacts": [],
+            "source": "external_reference",
+            "message": "" if content else "External search returned empty text.",
+            "error_code": "" if content else "invalid_external_reference",
+        }
+
+    if isinstance(parsed, list):
+        artifacts = _coerce_external_artifacts(parsed)
+        content = _artifacts_to_content(artifacts)
+        return {
+            "ok": bool(content or artifacts),
+            "content": content,
+            "artifacts": artifacts,
+            "source": "external_reference",
+            "message": "" if (content or artifacts) else "External search returned an empty result list.",
+            "error_code": "" if (content or artifacts) else "invalid_external_reference",
+        }
+
+    return {
+        "ok": False,
+        "content": "",
+        "artifacts": [],
+        "source": "external_reference",
+        "message": "web_search did not return a structured payload.",
+        "error_code": "invalid_external_reference",
+    }
+
+
 def _normalize_artifact(value: Any) -> Any:
     if isinstance(value, list):
         return [_normalize_artifact(item) for item in value]
@@ -93,6 +154,55 @@ def _normalize_artifact(value: Any) -> Any:
             "metadata": dict(value.metadata or {}),
         }
     return unwrap_tool_result(value)
+
+
+def _coerce_external_artifacts(value: Any) -> list[dict[str, Any]]:
+    artifacts: list[dict[str, Any]] = []
+    items = value if isinstance(value, list) else [value]
+    for item in items:
+        normalized = _normalize_artifact(item)
+        if isinstance(normalized, dict):
+            if "page_content" in normalized:
+                artifacts.append(normalized)
+                continue
+            title = normalized.get("title") or normalized.get("name") or ""
+            source = normalized.get("source") or normalized.get("url") or normalized.get("link") or ""
+            content = normalized.get("content") or normalized.get("snippet") or normalized.get("summary") or ""
+            metadata = dict(normalized.get("metadata") or {})
+            if title:
+                metadata.setdefault("title", title)
+            if source:
+                metadata.setdefault("source", source)
+            metadata.setdefault("provider", "external_reference")
+            if content or metadata:
+                artifacts.append({"page_content": str(content), "metadata": metadata})
+                continue
+        elif isinstance(normalized, str) and normalized.strip():
+            artifacts.append(
+                {
+                    "page_content": normalized.strip(),
+                    "metadata": {"provider": "external_reference"},
+                }
+            )
+    return artifacts
+
+
+def _artifacts_to_content(artifacts: list[dict[str, Any]]) -> str:
+    lines: list[str] = []
+    for index, artifact in enumerate(artifacts[:3], start=1):
+        if not isinstance(artifact, dict):
+            continue
+        metadata = artifact.get("metadata") or {}
+        title = str(metadata.get("title") or f"外部参考 {index}")
+        url = str(metadata.get("source") or "")
+        content = str(artifact.get("page_content") or "").strip()
+        block = [f"〖外部补充参考 {index}〗", f"标题: {title}"]
+        if url:
+            block.append(f"链接: {url}")
+        if content:
+            block.append(f"内容: {content}")
+        lines.append("\n".join(block))
+    return "\n\n".join(lines).strip()
 
 
 def _extract_embedded_json(text: str) -> Any:

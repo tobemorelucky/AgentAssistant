@@ -736,7 +736,7 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                                 "evidence_type": runbook_slot,
                             }
                         ],
-                        "plan_source": "investigation_runtime",
+                        "plan_source": "followup_local_enrichment",
                         "selected_profile": previous_profile_dict,
                         "target_alert": previous_target_alert,
                         "evidence_store": build_evidence_store(previous_profile),
@@ -770,7 +770,7 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                                 "evidence_type": external_slot,
                             }
                         ],
-                        "plan_source": "investigation_runtime",
+                        "plan_source": "followup_external_enrichment",
                         "selected_profile": previous_profile_dict,
                         "target_alert": previous_target_alert,
                         "evidence_store": build_evidence_store(previous_profile),

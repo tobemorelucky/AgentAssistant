@@ -15,6 +15,10 @@ from typing_extensions import TypedDict
 from app.agent.mcp_client import get_mcp_client_with_retry
 from app.config import config
 from app.core.llm_factory import llm_factory
+from app.services.rag_answer_guard import (
+    build_rag_realtime_guard_answer,
+    is_realtime_status_request_in_rag,
+)
 from app.tools import get_current_time, retrieve_knowledge
 
 
@@ -97,6 +101,10 @@ class RagAgentService:
     async def query(self, question: str, session_id: str) -> str:
         """Run a non-streaming chat query."""
         try:
+            if is_realtime_status_request_in_rag(question):
+                logger.info("[session {}] RAG realtime guard triggered", session_id)
+                return build_rag_realtime_guard_answer(question)
+
             await self._initialize_agent()
             logger.info("[session {}] RAG query started: {}", session_id, question)
 
@@ -131,6 +139,13 @@ class RagAgentService:
     async def query_stream(self, question: str, session_id: str) -> AsyncGenerator[Dict[str, Any], None]:
         """Run a streaming chat query for the standard RAG chat endpoint."""
         try:
+            if is_realtime_status_request_in_rag(question):
+                logger.info("[session {}] RAG realtime guard triggered (stream)", session_id)
+                guard_answer = build_rag_realtime_guard_answer(question)
+                yield {"type": "content", "data": guard_answer, "node": "guard"}
+                yield {"type": "complete", "data": {"answer": guard_answer}}
+                return
+
             await self._initialize_agent()
             logger.info("[session {}] RAG streaming query started: {}", session_id, question)
 

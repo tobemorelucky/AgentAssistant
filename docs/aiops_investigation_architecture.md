@@ -1,5 +1,73 @@
 # AIOps Investigation Architecture
 
+## Phase 4.9C：RAG 边界与 AIOps Follow-up Gate
+
+这一阶段的目标不是继续扩新 Profile，而是先把“普通知识问答”和“实时 AIOps 诊断”的边界收紧，并给 AIOps 多轮追问加上一层稳定的上下文判定。
+
+### 1. 普通 RAG 与 AIOps 的职责边界
+
+- 普通 RAG：
+  - 只回答知识库、Runbook、历史案例层面的问题；
+  - 不直接读取实时 CPU / 内存 / 磁盘 / 当前系统状态；
+  - 不允许把 demo / mock 数据写成“当前事实”。
+- AIOps：
+  - 用于实时巡检、专项诊断、证据采集和受控升级。
+
+因此，当用户在普通 RAG 模式下问“请检查服务器当前磁盘空间使用情况”“当前服务器是否异常”这类实时问题时，系统应明确提示切换到 AIOps，而不是把知识库示例包装成实时结论。
+
+### 2. Follow-up Context Gate
+
+AIOps 多轮对话引入 `relation_type` 判定：
+
+- `independent`
+  - 当前问题不依赖上一轮诊断，按新的诊断请求处理。
+- `dependent_followup`
+  - 当前问题依赖上一轮诊断结果，例如：
+    - 为什么建议这样做
+    - 这个安全吗
+    - 按你说的做了还是没效果
+    - 继续查别的方法
+- `ambiguous`
+  - 例如“继续”“再看看”“这个呢”，需要结合最近上下文解析。
+
+### 3. PreviousAIOpsContext
+
+系统不会把完整 Trace 全量塞回下一轮，而是保留压缩摘要：
+
+- `previous_user_query`
+- `previous_profile_id`
+- `previous_target_object`
+- `previous_target_alert`
+- `previous_diagnosis_summary`
+- `previous_key_evidence`
+- `previous_recommendations`
+- `previous_runbook_summary`
+- `previous_external_search_used`
+- `previous_action_safety_notes`
+
+### 4. Follow-up Resolution
+
+如果判定为 `dependent_followup`，系统会把当前追问和上一轮摘要一起交给模型，模型只在以下几类动作中做选择：
+
+- `answer_from_previous_context`
+- `rerun_same_profile`
+- `retrieve_more_local_knowledge`
+- `use_tavily_external_search`
+- `ask_for_user_clarification`
+
+### 5. Tavily 的受控触发条件
+
+Tavily 只在以下条件下允许触发：
+
+1. 本地知识不足
+   - `retrieve_knowledge` 无结果或结果质量不足；
+   - 无法基于本地 Runbook 形成明确处理建议。
+2. 依赖上一轮的用户反馈明确表示已有建议无效
+   - 例如“按你说的做了，还是没效果”；
+   - 此时也必须先关联上一轮 AIOps 上下文，再由模型决定是否触发外部搜索。
+
+Tavily 输出始终标记为 `external_reference`，不得伪装成本地实时证据。
+
 ## 目标
 
 AgentAssistant 的 AIOps 能力正在从“模板式诊断链”迁移到统一的 Evidence-Driven Investigation Engine。

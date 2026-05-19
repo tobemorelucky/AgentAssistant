@@ -17,6 +17,7 @@ from app.agent.aiops import (
     skill_router,
     verifier,
 )
+from app.agent.aiops import followup_context
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
 from app.agent.aiops.incident_memory import build_incident_record
 from app.agent.aiops.patrol import summarize_structured_tool_result
@@ -31,21 +32,21 @@ NODE_REPLANNER = "replanner"
 NODE_VERIFIER = "verifier"
 APPEND_FIELDS = {"past_steps", "trace_events", "tools_used"}
 DEFAULT_AIOPS_TASK = (
-    "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，"
-    "结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。"
+    "请开始一次 AIOps 巡检，并保留完整 Agent Trace。若发现异常，请优先基于本地实时证据、"
+    "本地知识库和 Runbook 继续排查，并明确标注证据边界与风险提示。"
 )
 
 REMEDIATION_FEEDBACK_TOKENS = (
-    "还是没用",
+    "按你说的做了",
     "还是没效果",
-    "没有效果",
+    "还是没有效果",
     "没效果",
     "继续查",
-    "继续排查",
-    "还有其他办法",
-    "还有别的办法",
-    "仍然不行",
-    "依然不行",
+    "继续查别的方法",
+    "这个办法没用",
+    "清理后还是不行",
+    "还有其他办法吗",
+    "继续看看",
 )
 
 
@@ -306,6 +307,13 @@ class AIOpsService:
         pending_payload = runtime_store.load_pending_actions(session_id)
         pending_status = pending_payload.get("status")
         remediation_feedback_failed = any(token in (user_input or "") for token in REMEDIATION_FEEDBACK_TOKENS)
+        previous_aiops_context = None
+        if snapshot and snapshot.get("state"):
+            previous_aiops_context = (
+                snapshot["state"].get("previous_aiops_context")
+                or followup_context.build_previous_aiops_context(snapshot["state"])
+            )
+        followup_relation = followup_context.classify_followup_relation(user_input, previous_aiops_context)
 
         if snapshot and snapshot.get("state"):
             state = snapshot["state"]
@@ -353,6 +361,9 @@ class AIOpsService:
             "escalation_reason": "",
             "host_health_evidence": {},
             "remediation_feedback_failed": remediation_feedback_failed,
+            "previous_aiops_context": previous_aiops_context,
+            "followup_relation": followup_relation,
+            "followup_resolution": None,
             "incident_record": {},
             "feedback": {},
             "generated_skill_draft": None,
@@ -513,6 +524,7 @@ class AIOpsService:
 
             runtime_store.clear_pending_actions(session_id)
             current_state["incident_record"] = build_incident_record(current_state)
+            current_state["previous_aiops_context"] = followup_context.build_previous_aiops_context(current_state)
             runtime_store.save_session(session_id, current_state, "completed")
             yield {
                 "type": "complete",

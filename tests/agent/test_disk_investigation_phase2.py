@@ -158,7 +158,7 @@ def test_disk_report_marks_gaps_and_safety_when_conditional_evidence_missing():
     report = disk_engine.build_disk_investigation_report(_state_with_store(store))
     assert "he-VMware-Virtual-Platform" in report
     assert "41.1%" in report
-    assert "当前未接入 Docker 额外证据" in report
-    assert "当前未接入 deleted open files 额外证据" in report
+    assert "当前尚未采集 Docker 磁盘占用证据" in report
+    assert "当前尚未采集 deleted open files 证据" in report
     assert "本次扫描存在权限跳过，结果可能不完整" in report
-    assert "没有执行任何删除" in report
+    assert "本轮未执行任何重启、清理、扩容、限流或其他高风险操作" in report

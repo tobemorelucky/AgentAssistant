@@ -35,6 +35,19 @@ DEFAULT_AIOPS_TASK = (
     "结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。"
 )
 
+REMEDIATION_FEEDBACK_TOKENS = (
+    "还是没用",
+    "还是没效果",
+    "没有效果",
+    "没效果",
+    "继续查",
+    "继续排查",
+    "还有其他办法",
+    "还有别的办法",
+    "仍然不行",
+    "依然不行",
+)
+
 
 class AIOpsService:
     """Governed AIOps Agent platform service."""
@@ -292,6 +305,7 @@ class AIOpsService:
         snapshot = runtime_store.load_session(session_id)
         pending_payload = runtime_store.load_pending_actions(session_id)
         pending_status = pending_payload.get("status")
+        remediation_feedback_failed = any(token in (user_input or "") for token in REMEDIATION_FEEDBACK_TOKENS)
 
         if snapshot and snapshot.get("state"):
             state = snapshot["state"]
@@ -334,6 +348,11 @@ class AIOpsService:
             "pending_action": None,
             "active_alerts": [],
             "target_alert": None,
+            "abnormal_findings": [],
+            "selected_escalation_profile": None,
+            "escalation_reason": "",
+            "host_health_evidence": {},
+            "remediation_feedback_failed": remediation_feedback_failed,
             "incident_record": {},
             "feedback": {},
             "generated_skill_draft": None,

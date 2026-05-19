@@ -14,6 +14,7 @@ RUNTIME_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "runtime.py"
 PATROL_DISPATCH_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "patrol_dispatch.py"
 DISK_CLEANUP_PATH = ROOT / "app" / "agent" / "aiops" / "disk_cleanup.py"
 DISK_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "disk_engine.py"
+HOST_HEALTH_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "host_health_engine.py"
 
 
 def _load_module(module_name: str, path: Path):
@@ -39,20 +40,22 @@ models = _load_module("app.agent.aiops.investigation.models", MODELS_PATH)
 profiles = _load_module("app.agent.aiops.investigation.profiles", PROFILES_PATH)
 evidence = _load_module("app.agent.aiops.investigation.evidence", EVIDENCE_PATH)
 disk_cleanup = _load_module("app.agent.aiops.disk_cleanup", DISK_CLEANUP_PATH)
+patrol_dispatch = _load_module("app.agent.aiops.investigation.patrol_dispatch", PATROL_DISPATCH_PATH)
 disk_engine = _load_module("app.agent.aiops.investigation.disk_engine", DISK_ENGINE_PATH)
 memory_engine = _load_module("app.agent.aiops.investigation.memory_engine", MEMORY_ENGINE_PATH)
 cpu_engine = _load_module("app.agent.aiops.investigation.cpu_engine", CPU_ENGINE_PATH)
+host_health_engine = _load_module("app.agent.aiops.investigation.host_health_engine", HOST_HEALTH_ENGINE_PATH)
 runtime = _load_module("app.agent.aiops.investigation.runtime", RUNTIME_PATH)
-patrol_dispatch = _load_module("app.agent.aiops.investigation.patrol_dispatch", PATROL_DISPATCH_PATH)
 
 
-def _state(input_text: str, profile_id: str, store: dict[str, dict]):
+def _state(input_text: str, profile_id: str, store: dict[str, dict], **extra):
     return {
         "input": input_text,
         "selected_profile": {"profile_id": profile_id},
         "evidence_store": store,
         "investigation_round": 1,
         "no_progress_rounds": 0,
+        **extra,
     }
 
 
@@ -197,7 +200,7 @@ def test_memory_profile_report_is_evidence_grounded_with_real_values():
     report = memory_engine.build_memory_investigation_report(
         _state("系统现在内存情况如何？", "memory_pressure_profile", store)
     )
-    assert "AIOps 内存诊断报告" in report
+    assert "AIOps 内存专项诊断报告" in report
     assert "76.4%" in report
     assert "python" in report
 
@@ -231,6 +234,12 @@ def test_cpu_profile_can_finalize_with_real_results():
             ],
             "source": "remote_host",
         },
+    )
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_runbook",
+        tool_name="retrieve_knowledge",
+        raw_result={"ok": True, "content": "CPU 排查 runbook", "source": "local_rag"},
     )
     decision = cpu_engine.decide_cpu_stop(
         {
@@ -275,3 +284,60 @@ def test_patrol_dispatch_maps_cpu_and_memory_alerts():
 
     assert patrol_dispatch.resolve_alert_profile_id(cpu_alert) == "cpu_pressure_profile"
     assert patrol_dispatch.resolve_alert_profile_id(memory_alert) == "memory_pressure_profile"
+
+
+def test_cpu_follow_up_triggers_web_search_only_when_rag_missing():
+    store = evidence.build_evidence_store(profiles.get_profile("cpu_pressure_profile"))
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_summary",
+        tool_name="get_cpu_summary",
+        raw_result={"ok": True, "host": "vm-01", "usage_percent": 83.4, "status": "warning", "source": "remote_host"},
+    )
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="top_cpu_processes",
+        tool_name="list_top_cpu_processes",
+        raw_result={"ok": True, "processes": [{"process_name": "uvicorn", "cpu_percent": 48.0}], "source": "remote_host"},
+    )
+    cpu_engine.update_cpu_evidence_store(
+        store,
+        slot="cpu_runbook",
+        tool_name="retrieve_knowledge",
+        raw_result={"ok": True, "content": "", "documents": [], "source": "local_rag"},
+    )
+    tasks = cpu_engine.build_follow_up_tasks(
+        _state("CPU 占用高怎么办？", "cpu_pressure_profile", store)
+    )
+    assert any(task["tool"] == "web_search" for task in tasks)
+
+
+def test_memory_follow_up_triggers_web_search_when_feedback_failed():
+    store = evidence.build_evidence_store(profiles.get_profile("memory_pressure_profile"))
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="memory_summary",
+        tool_name="get_memory_summary",
+        raw_result={"ok": True, "host": "vm-01", "usage_percent": 88.0, "status": "warning", "source": "remote_host"},
+    )
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="top_memory_processes",
+        tool_name="list_top_memory_processes",
+        raw_result={"ok": True, "processes": [{"process_name": "python", "memory_percent": 35.0}], "source": "remote_host"},
+    )
+    memory_engine.update_memory_evidence_store(
+        store,
+        slot="memory_runbook",
+        tool_name="retrieve_knowledge",
+        raw_result={"ok": True, "content": "已有建议", "documents": [{"title": "runbook"}], "source": "local_rag"},
+    )
+    tasks = memory_engine.build_follow_up_tasks(
+        _state(
+            "我按你说的做了，还是没效果，继续查。",
+            "memory_pressure_profile",
+            store,
+            remediation_feedback_failed=True,
+        )
+    )
+    assert any(task["tool"] == "web_search" for task in tasks)

@@ -34,6 +34,7 @@ from .disk_engine import (
 )
 from .host_health_engine import (
     HOST_HEALTH_PATROL_PROFILE_ID,
+    build_escalation_payload,
     build_follow_up_tasks as build_host_health_follow_up_tasks,
     build_host_health_patrol_report,
     build_initial_host_health_tasks,
@@ -69,7 +70,12 @@ class InvestigationRuntime(Protocol):
     profile_id: str
 
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]: ...
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]: ...
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]: ...
     def build_follow_up_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]: ...
     def decide_stop(self, state: dict[str, Any]) -> StopDecision: ...
     def build_report(self, state: dict[str, Any]) -> str: ...
@@ -78,6 +84,7 @@ class InvestigationRuntime(Protocol):
     def summarize_task_result(self, task: dict[str, Any], normalized_result: Any) -> str: ...
     def summarize_evidence_store(self, state: dict[str, Any]) -> str: ...
     def compute_no_progress_rounds(self, state: dict[str, Any]) -> int: ...
+    def build_escalation(self, state: dict[str, Any]) -> dict[str, Any] | None: ...
 
 
 class BaseInvestigationRuntime:
@@ -88,7 +95,12 @@ class BaseInvestigationRuntime:
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         raise NotImplementedError
 
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]:
         raise NotImplementedError
 
     def build_follow_up_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
@@ -121,6 +133,9 @@ class BaseInvestigationRuntime:
     def compute_no_progress_rounds(self, state: dict[str, Any]) -> int:
         return int(state.get("no_progress_rounds") or 0)
 
+    def build_escalation(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        return None
+
 
 class DiskInvestigationRuntime(BaseInvestigationRuntime):
     profile_id = DISK_PRESSURE_PROFILE_ID
@@ -128,7 +143,12 @@ class DiskInvestigationRuntime(BaseInvestigationRuntime):
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_disk_tasks()
 
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]:
         return update_disk_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -168,7 +188,9 @@ class DiskInvestigationRuntime(BaseInvestigationRuntime):
         return compute_disk_no_progress_rounds(
             dict(state.get("evidence_store") or {}),
             previous_no_progress_rounds=int(state.get("no_progress_rounds") or 0),
-            last_slot=state.get("last_investigation_slot") if isinstance(state.get("last_investigation_slot"), str) else None,
+            last_slot=state.get("last_investigation_slot")
+            if isinstance(state.get("last_investigation_slot"), str)
+            else None,
         )
 
     def summarize_task(self, task: dict[str, Any]) -> str:
@@ -181,7 +203,12 @@ class HostHealthPatrolRuntime(BaseInvestigationRuntime):
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_host_health_tasks()
 
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]:
         return update_host_health_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -221,11 +248,16 @@ class HostHealthPatrolRuntime(BaseInvestigationRuntime):
         return compute_host_health_no_progress_rounds(
             dict(state.get("evidence_store") or {}),
             previous_no_progress_rounds=int(state.get("no_progress_rounds") or 0),
-            last_slot=state.get("last_investigation_slot") if isinstance(state.get("last_investigation_slot"), str) else None,
+            last_slot=state.get("last_investigation_slot")
+            if isinstance(state.get("last_investigation_slot"), str)
+            else None,
         )
 
     def summarize_task(self, task: dict[str, Any]) -> str:
         return summarize_host_health_investigation_task(task)
+
+    def build_escalation(self, state: dict[str, Any]) -> dict[str, Any] | None:
+        return build_escalation_payload(state)
 
 
 class MemoryInvestigationRuntime(BaseInvestigationRuntime):
@@ -234,7 +266,12 @@ class MemoryInvestigationRuntime(BaseInvestigationRuntime):
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_memory_tasks()
 
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]:
         return update_memory_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -274,7 +311,9 @@ class MemoryInvestigationRuntime(BaseInvestigationRuntime):
         return compute_memory_no_progress_rounds(
             dict(state.get("evidence_store") or {}),
             previous_no_progress_rounds=int(state.get("no_progress_rounds") or 0),
-            last_slot=state.get("last_investigation_slot") if isinstance(state.get("last_investigation_slot"), str) else None,
+            last_slot=state.get("last_investigation_slot")
+            if isinstance(state.get("last_investigation_slot"), str)
+            else None,
         )
 
     def summarize_task(self, task: dict[str, Any]) -> str:
@@ -287,7 +326,12 @@ class CpuInvestigationRuntime(BaseInvestigationRuntime):
     def build_initial_tasks(self, state: dict[str, Any]) -> list[dict[str, Any]]:
         return build_initial_cpu_tasks()
 
-    def update_evidence_store(self, state: dict[str, Any], task: dict[str, Any], raw_result: Any) -> dict[str, dict[str, Any]]:
+    def update_evidence_store(
+        self,
+        state: dict[str, Any],
+        task: dict[str, Any],
+        raw_result: Any,
+    ) -> dict[str, dict[str, Any]]:
         return update_cpu_evidence_store(
             dict(state.get("evidence_store") or {}),
             slot=str(task.get("slot") or ""),
@@ -327,7 +371,9 @@ class CpuInvestigationRuntime(BaseInvestigationRuntime):
         return compute_cpu_no_progress_rounds(
             dict(state.get("evidence_store") or {}),
             previous_no_progress_rounds=int(state.get("no_progress_rounds") or 0),
-            last_slot=state.get("last_investigation_slot") if isinstance(state.get("last_investigation_slot"), str) else None,
+            last_slot=state.get("last_investigation_slot")
+            if isinstance(state.get("last_investigation_slot"), str)
+            else None,
         )
 
     def summarize_task(self, task: dict[str, Any]) -> str:

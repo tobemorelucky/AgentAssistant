@@ -9,6 +9,7 @@ MODELS_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "models.py"
 PROFILES_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "profiles.py"
 EVIDENCE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "evidence.py"
 DISK_CLEANUP_PATH = ROOT / "app" / "agent" / "aiops" / "disk_cleanup.py"
+PATROL_DISPATCH_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "patrol_dispatch.py"
 CPU_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "cpu_engine.py"
 MEMORY_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "memory_engine.py"
 HOST_HEALTH_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "host_health_engine.py"
@@ -37,6 +38,7 @@ models = _load_module("app.agent.aiops.investigation.models", MODELS_PATH)
 profiles = _load_module("app.agent.aiops.investigation.profiles", PROFILES_PATH)
 evidence = _load_module("app.agent.aiops.investigation.evidence", EVIDENCE_PATH)
 disk_cleanup = _load_module("app.agent.aiops.disk_cleanup", DISK_CLEANUP_PATH)
+patrol_dispatch = _load_module("app.agent.aiops.investigation.patrol_dispatch", PATROL_DISPATCH_PATH)
 cpu_engine = _load_module("app.agent.aiops.investigation.cpu_engine", CPU_ENGINE_PATH)
 memory_engine = _load_module("app.agent.aiops.investigation.memory_engine", MEMORY_ENGINE_PATH)
 host_health_engine = _load_module("app.agent.aiops.investigation.host_health_engine", HOST_HEALTH_ENGINE_PATH)
@@ -107,11 +109,11 @@ def test_host_health_profile_report_shows_healthy_summary():
         raw_result={"ok": True, "provider": "remote_host", "active_alerts": [], "source": "remote_host"},
     )
     report = host_health_engine.build_host_health_patrol_report(_state(store))
-    assert "当前未发现明显资源级异常" in report
+    assert "当前主机未发现明显资源级异常" in report
     assert "32.1%" in report
     assert "22.0%" in report
     assert "41.1%" in report
-    assert "当前未发现活跃主机级告警" in report
+    assert "当前未发现活跃告警" in report
 
 
 def test_host_health_profile_finishes_with_limitations_when_required_tools_fail():
@@ -140,6 +142,53 @@ def test_host_health_profile_finishes_with_limitations_when_required_tools_fail(
     )
     assert decision.decision == models.StopDecisionType.FINALIZE_WITH_LIMITATIONS
     report = host_health_engine.build_host_health_patrol_report(_state(store))
-    assert "未成功获取 CPU 实时摘要" in report
-    assert "未成功获取内存实时摘要" in report
-    assert "未成功获取磁盘实时摘要" in report
+    assert "未成功获取CPU 摘要" in report
+    assert "未成功获取内存摘要" in report
+    assert "未成功获取磁盘摘要" in report
+
+
+def test_host_health_patrol_builds_escalation_payload_from_active_alert():
+    store = evidence.build_evidence_store(profiles.get_profile("host_health_patrol_profile"))
+    host_health_engine.update_host_health_evidence_store(
+        store,
+        slot="cpu_summary",
+        tool_name="get_cpu_summary",
+        raw_result={"ok": True, "host": "he-VM", "usage_percent": 65.0, "status": "warning", "source": "mock"},
+    )
+    host_health_engine.update_host_health_evidence_store(
+        store,
+        slot="memory_summary",
+        tool_name="get_memory_summary",
+        raw_result={"ok": True, "host": "he-VM", "usage_percent": 40.0, "status": "healthy", "source": "mock"},
+    )
+    host_health_engine.update_host_health_evidence_store(
+        store,
+        slot="disk_usage",
+        tool_name="get_disk_usage",
+        raw_result={"ok": True, "host": "he-VM", "usage_percent": 70.0, "status": "warning", "source": "mock"},
+    )
+    host_health_engine.update_host_health_evidence_store(
+        store,
+        slot="active_alerts",
+        tool_name="get_patrol_alerts",
+        raw_result={
+            "ok": True,
+            "source": "mock",
+            "active_alerts": [
+                {
+                    "alert_name": "HighCPUUsage",
+                    "severity": "critical",
+                    "service_name": "data-sync-service",
+                    "host": "he-VM",
+                    "description": "CPU alert",
+                    "resource_type": "cpu",
+                    "source": "mock",
+                }
+            ],
+        },
+    )
+    payload = host_health_engine.build_escalation_payload(_state(store))
+    assert payload is not None
+    assert payload["selected_escalation_profile"]["profile_id"] == "cpu_pressure_profile"
+    assert payload["target_alert"]["alert_name"] == "HighCPUUsage"
+    assert "最高优先级告警" in payload["escalation_reason"]

@@ -15,6 +15,8 @@ from app.agent.aiops.disk_cleanup import (
     is_disk_cleanup_request,
 )
 from app.agent.aiops.investigation import StopDecision, StopDecisionType, get_runtime
+from app.agent.aiops.investigation.evidence import build_evidence_store
+from app.agent.aiops.investigation.profiles import get_profile
 from app.agent.aiops.patrol import (
     build_alert_report,
     collect_evidence_gaps,
@@ -243,6 +245,79 @@ async def replanner(state: PlanExecuteState) -> dict[str, object]:
                     )
                 ],
             }
+
+        escalation_builder = getattr(runtime, "build_escalation", None)
+        escalation_payload = escalation_builder(state_for_runtime) if callable(escalation_builder) else None
+        if escalation_payload and stop_decision.decision != StopDecisionType.FINALIZE_WITH_LIMITATIONS:
+            escalated_profile = escalation_payload.get("selected_escalation_profile") or {}
+            escalated_profile_id = escalated_profile.get("profile_id")
+            escalated_runtime = get_runtime(escalated_profile_id)
+            escalated_profile_model = get_profile(escalated_profile_id)
+            if escalated_runtime is not None and escalated_profile_model is not None:
+                escalated_state = dict(state_for_runtime)
+                escalated_state.update(
+                    {
+                        "selected_profile": escalated_profile,
+                        "target_alert": escalation_payload.get("target_alert") or state_for_runtime.get("target_alert"),
+                        "abnormal_findings": escalation_payload.get("abnormal_findings") or [],
+                        "selected_escalation_profile": escalated_profile,
+                        "escalation_reason": escalation_payload.get("escalation_reason") or "",
+                        "host_health_evidence": dict(state_for_runtime.get("evidence_store") or {}),
+                        "evidence_store": build_evidence_store(escalated_profile_model),
+                        "investigation_round": 0,
+                        "no_progress_rounds": 0,
+                        "last_investigation_slot": None,
+                        "verifier_result": {},
+                    }
+                )
+                next_tasks = escalated_runtime.build_initial_tasks(escalated_state)
+                return {
+                    "plan": next_tasks,
+                    "response": "",
+                    "plan_source": "investigation_runtime",
+                    "selected_profile": escalated_profile,
+                    "target_alert": escalation_payload.get("target_alert") or state_for_runtime.get("target_alert"),
+                    "abnormal_findings": escalation_payload.get("abnormal_findings") or [],
+                    "selected_escalation_profile": escalated_profile,
+                    "escalation_reason": escalation_payload.get("escalation_reason") or "",
+                    "host_health_evidence": dict(state_for_runtime.get("evidence_store") or {}),
+                    "evidence_store": build_evidence_store(escalated_profile_model),
+                    "investigation_round": 0,
+                    "no_progress_rounds": 0,
+                    "last_investigation_slot": None,
+                    "verifier_result": {},
+                    "trace_events": [
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="warning",
+                            title="Abnormal findings detected",
+                            result_summary=" | ".join(
+                                str(item.get("summary"))
+                                for item in (escalation_payload.get("abnormal_findings") or [])[:3]
+                                if isinstance(item, dict)
+                            ),
+                        ),
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="success",
+                            title="Selected escalation target",
+                            result_summary=str(escalated_profile_id),
+                            metadata={
+                                "target_alert": escalation_payload.get("target_alert") or {},
+                                "reason": escalation_payload.get("escalation_reason") or "",
+                            },
+                        ),
+                        create_trace_event(
+                            session_id=session_id,
+                            node="replanner",
+                            status="success",
+                            title=f"Escalating to {escalated_profile_id}",
+                            result_summary=escalation_payload.get("escalation_reason") or "",
+                        ),
+                    ],
+                }
 
         if verifier_result and not verifier_result.get("passed", True):
             next_tasks = runtime.build_follow_up_tasks(state_for_runtime)

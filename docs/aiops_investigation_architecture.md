@@ -1,34 +1,38 @@
 # AIOps Investigation Architecture
 
-## Overview
+## 目标
 
-AgentAssistant 的 AIOps 能力正在从多条割裂的老路径，迁移到统一的 Evidence-Driven Investigation Engine。
+AgentAssistant 的 AIOps 能力正在从“模板式诊断链”迁移到统一的 Evidence-Driven Investigation Engine。
 
-当前主线目标是：
-- 用 `DiagnosisProfile` 定义场景边界
-- 用 `InvestigationRuntime` 管理任务、证据、收口和报告
-- 用 `Evidence Store` 驱动报告和 verifier，而不是依赖自由文本计划
+核心原则：
 
-## Why The Old Architecture Was Unstable
+1. 用 Profile 定义诊断边界
+2. 用 Runtime 执行证据驱动流程
+3. 用 Evidence Store 约束事实来源
+4. 用 StopController 防止无限循环
+5. 用 Verifier 校验“事实 / 推断 / 参考 / 缺口”的边界
 
-在重构前，AIOps 长期并存三类不统一路径：
-- 磁盘专项的确定性分支
-- 默认巡检的模板化深诊断分支
-- custom AIOps 的 generic plan + LLM fallback 分支
+## 为什么旧架构不稳定
 
-这些路径会带来几类典型问题：
-- Planner 写的步骤和 Executor 实际执行工具不一致
-- Verifier 把自由文本 `suggested_next_steps` 回填成新 plan，导致循环
-- Skill 既像路由规则，又像执行模板，责任混乱
-- 报告常常混入没有被实时证据支撑的推断
+旧 AIOps 同时存在多条不统一链路：
 
-## Core Building Blocks
+- disk_cleanup 专项确定性分支
+- default patrol 模板分支
+- custom generic + LLM fallback 长链
 
-当前统一引擎的核心构件：
+典型问题包括：
+
+- Planner 写的步骤和 Executor 实际执行的工具不一致
+- Verifier 把自由文本 `suggested_next_steps` 回填成新的计划
+- 证据不足时依然生成过度推断结论
+- Trace 容易持续增长，难以收口
+
+## 核心构件
 
 ### DiagnosisProfile
 
-定义某一诊断场景的结构化边界，包括：
+Profile 定义一类诊断任务的固定边界：
+
 - `profile_id`
 - `supported_intents`
 - `resource_type`
@@ -40,194 +44,230 @@ AgentAssistant 的 AIOps 能力正在从多条割裂的老路径，迁移到统�
 
 ### InvestigationRuntime
 
-每个 executable profile 对应一个 runtime，统一实现：
-- `build_initial_tasks`
-- `update_evidence_store`
-- `build_follow_up_tasks`
-- `decide_stop`
-- `build_report`
-- `verify_report`
-- `normalize_result`
-- `summarize_task_result`
-- `summarize_evidence_store`
-- `compute_no_progress_rounds`
+Runtime 是某个 Profile 的执行器。当前统一接口包括：
+
+1. `build_initial_tasks`
+2. `normalize_result`
+3. `update_evidence_store`
+4. `build_follow_up_tasks`
+5. `decide_stop`
+6. `build_report`
+7. `verify_report`
+8. `summarize_task_result`
+9. `summarize_evidence_store`
+10. `compute_no_progress_rounds`
+11. `build_escalation`
 
 ### Evidence Store
 
-Evidence Store 记录每个 evidence slot 的：
-- `status`
+Evidence Store 记录每个证据槽的状态：
+
+- `missing`
+- `collected`
+- `failed`
+- `partial`
+
+以及：
+
 - `source`
 - `payload`
 - `attempts`
 - `quality`
 - `error_message`
 
-报告、replanner 和 verifier 都优先围绕 `evidence_store` 工作。
+### StopController
 
-### Stop Controller
+StopController 的职责是决定：
 
-Stop 逻辑以 profile 为中心，避免无限补查。典型收口条件：
-- required evidence 已满足
-- 无进展轮次达到阈值
-- 某些 required slot 已达到最大尝试次数
-- 总轮次达到上限
+- 继续补证据
+- 正常收口
+- 带限制收口
 
-## Skill Semantics
+它阻止：
 
-Skill 已拆成三种语义：
+- 无限补查同一证据槽
+- 无进展反复循环
+- required evidence 明显失败时仍伪装成“已完成”
+
+## Skill 的新定位
+
+Skill 不再默认等于“执行模板”，而是分成三类：
+
 - `execution_profile`
 - `reference_playbook`
 - `draft`
 
-当前原则：
-- `execution_profile` 才允许进入可执行 Investigation Engine
-- `reference_playbook` 只作为知识参考，不直接驱动执行计划
-- `draft` 不进入正式执行
+含义如下：
 
-## Phase Progress
+- `execution_profile`：允许驱动正式 Investigation Runtime
+- `reference_playbook`：只作为知识参考，不直接生成执行计划
+- `draft`：不进入正式执行
 
-### Phase 1: 架构止血
+## 已完成阶段
 
-目标：
-- 停止 custom generic 长链继续扩散
-- 给新引擎补上基础模型和状态字段
+### Phase 1：架构止血
 
-结果：
 - 新增 investigation 基础模型
 - 扩展 `PlanExecuteState`
-- 老 Skill 默认降级为 `reference_playbook`
-- 未命中 `execution_profile` 的 custom AIOps 不再进入旧 generic 深链
-- verifier 不再把自由文本 `suggested_next_steps` 直接回填 plan
+- 旧 Skill 默认降级为 `reference_playbook`
+- 未命中 `execution_profile` 的 custom AIOps 不再进入旧 generic 长链
+- Verifier 不再把自由文本 `suggested_next_steps` 直接回填为 plan
 
-### Phase 2: Disk Runtime
+### Phase 2：Disk Runtime
 
-目标：
-- 把磁盘诊断作为第一个正式 profile 迁入新引擎
+完成 `disk_pressure_profile` 迁移：
 
-结果：
-- `disk_pressure_profile`
-- `DiskInvestigationRuntime`
 - InvestigationTask
 - Evidence Store
 - Follow-up Tasks
 - StopController
 - Evidence-grounded Report
-- Disk-specific Verifier
+- Disk Verifier
 
-### Phase 3: Runtime Registry + Patrol Dispatcher
+### Phase 3：Runtime Registry + Patrol Dispatcher
 
-目标：
-- 从 disk-specific if/else 过渡到通用 runtime registry
-- 把默认巡检从“深诊断模板”缩成“告警发现 + 分发”
+- 引入统一 runtime registry
+- 默认巡检不再直接走 generic 深链
+- `patrol_dispatch_profile` 成为内部告警分发能力
 
-结果：
-- 新增 runtime registry
-- `patrol_dispatch_profile`
-- 默认巡检不再自动回退旧 generic 深链
-- 告警可以分发到 `disk_pressure_profile` / `cpu_pressure_profile` / `memory_pressure_profile`
+### Phase 4：CPU / Memory Runtime
 
-### Phase 4: CPU / Memory Runtime
+完成：
 
-目标：
-- 把 CPU / Memory 正式接入统一引擎
-
-结果：
-- `memory_pressure_profile`
 - `cpu_pressure_profile`
-- `MemoryInvestigationRuntime`
+- `memory_pressure_profile`
 - `CpuInvestigationRuntime`
-- 对接 Host Agent 的 CPU / Memory 实时接口
+- `MemoryInvestigationRuntime`
 
-当前第一版 CPU / Memory 只覆盖：
-- 当前状态
+第一版只聚焦：
+
+- 实时摘要
 - 热点进程
-- 基础建议
-- 有限收口
+- 本地 Runbook / RAG
+- 稳定收口
 
-刻意没有强行加入日志 / 工单，是为了先保证：
-- 证据真实
-- 报告不乱推断
-- 工作流可稳定结束
+暂不强制引入日志 / 工单 / 更深服务级证据。
 
-### Phase 4.5: Alert Provider & CPU Compatibility
+### Phase 4.5：真实 Host Alert 与 CPU 字段兼容
 
-目标：
-- 统一巡检告警来源
-- 校正 Host Agent CPU 字段兼容
-
-结果：
+- Monitor Provider 支持真实 Host Agent
 - CPU summary 兼容 `cpu_percent / logical_cpu_count / load_1m`
-- 新增 `AIOPS_ALERT_PROVIDER=mock|remote_host|disabled`
-- remote_host 巡检可合成主机级告警：
-  - `HostHighCPUUsage`
-  - `HostHighMemoryUsage`
-  - `HostHighDiskUsage`
+- 新增 Alert Provider：
+  - `mock`
+  - `remote_host`
+  - `disabled`
 
-### Phase 4.8A: Host Health Patrol
+### Phase 4.8A：Host Health Patrol
 
-目标：
-- 让默认 AIOps 巡检不再只是“查活跃告警”
-- 升级成真正的主机基础健康巡检
+默认巡检升级为 `host_health_patrol_profile`，先采集：
 
-结果：
-- 新增 `host_health_patrol_profile`
-- 新增 `HostHealthPatrolRuntime`
-- 默认 `mode=default` 现在优先进入主机健康巡检
-- 巡检至少采集：
-  - `cpu_summary`
-  - `memory_summary`
-  - `disk_usage`
-  - optional `active_alerts`
+- `cpu_summary`
+- `memory_summary`
+- `disk_usage`
+- optional `active_alerts`
 
-当前 Phase 4.8A 的语义是：
-- 如果资源 healthy 且没有活跃告警，输出主机健康报告
-- 如果某项异常，报告提示建议进入 CPU / Memory / Disk 专项诊断
-- 还不会自动跳入专项 Profile
+这一阶段的默认巡检可以输出主机健康结论，但异常时仍主要停留在“建议进入专项诊断”。
 
-## Current Executable Profiles
+### Phase 4.9B：Agentic Escalation + 本地优先 + 外搜受控触发
 
-当前已可执行的 profile：
+这是当前最新阶段。
+
+#### 1. 巡检异常自动升级
+
+`host_health_patrol_profile` 在 required evidence 齐备后，会生成：
+
+- `abnormal_findings`
+- `selected_escalation_profile`
+- `escalation_reason`
+- `target_alert`
+
+优先级规则：
+
+1. 若存在 active alert，优先选最高 severity alert
+2. 若无 active alert，再按 CPU / Memory / Disk 的异常 severity 排序
+
+随后系统会自动切换到对应专项 Profile，而不是只停留在“建议进入专项诊断”。
+
+#### 2. 本地证据优先级
+
+专项 Profile 按以下顺序工作：
+
+1. 本地实时证据
+2. 本地上下文证据
+3. 本地 Runbook / RAG
+4. 外部补充参考
+
+#### 3. Tavily 外搜触发边界
+
+`web_search` 不是默认步骤。
+
+只在两类场景触发：
+
+1. 本地 Runbook / RAG 不足
+   - 无内容
+   - 无引用文档
+   - 无法形成有效处理建议
+2. 用户反馈已有建议无效
+   - “还是没用”
+   - “处理后仍然不行”
+   - “继续查”
+   - “还有其他办法吗”
+
+外搜结果必须标记为 `external_reference`，只用于补充思路，不能伪装成本地实时证据。
+
+#### 4. 处置动作分级
+
+专项报告统一输出：
+
+- 低风险建议
+- 需人工确认 / 审批的动作
+- 禁止自动执行 / 高风险动作
+
+并明确写明：
+
+- 本轮未自动执行危险操作
+- 若未来接入危险操作工具，必须经过审批节点
+
+## 当前默认巡检语义
+
+当前默认巡检已经变成：
+
+1. 执行主机健康巡检
+2. 若健康，则直接输出健康结论
+3. 若异常，则自动选择最高优先级异常
+4. 升级进入 CPU / Memory / Disk 对应专项 Profile
+5. 继续执行本地实时证据 + 本地知识优先的专项诊断
+
+## 当前可执行 Profile
+
 - `host_health_patrol_profile`
-- `disk_pressure_profile`
-- `memory_pressure_profile`
 - `cpu_pressure_profile`
-- `patrol_dispatch_profile`（内部能力，主要用于告警分发）
+- `memory_pressure_profile`
+- `disk_pressure_profile`
 
-## Default Patrol Today
+## 仍保留的 legacy
 
-现在默认巡检的职责已经变为：
-- 先做主机健康巡检
-- 输出 CPU / 内存 / 磁盘 / 活跃告警的整体结论
-- 若发现异常，给出进入专项诊断的建议
+目前仍保留但不作为默认主路径的 legacy 包括：
 
-而不是：
-- 只查一遍告警就结束
-- 或直接进入模板化深诊断
-
-## Legacy Paths
-
-当前仍保留但已标记 legacy 的逻辑包括：
-- old `disk_cleanup` 兼容分支
-- old patrol 深诊断模板链
+- old `disk_cleanup` 兼容逻辑
+- old patrol 深链兼容逻辑
 - old generic fallback compatibility
 
-这些逻辑目前主要用于兼容和安全兜底，Phase 5 才考虑删除。
+这些逻辑将在 Phase 5 再统一清理，不在当前阶段贸然删除。
 
-## Phase 4.8B Next
+## Phase 5 之后再做什么
 
-下一阶段建议优先做：
-- host health patrol 检测到异常后，自动 dispatch 到对应专项 profile
+当前不进入 Phase 5。
 
-推荐顺序：
-1. CPU / Memory / Disk 异常识别统一化
-2. `host_health_patrol_profile` 到专项 profile 的自动跳转策略
-3. 异常后共享已有 evidence，避免重复采集
-4. 统一“巡检 -> 分发 -> 专项诊断”的 Trace 语义
+进入 Phase 5 的前提是：
 
-## Phase 5 Later
+- 默认巡检 + CPU / Memory / Disk 专项诊断已稳定
+- 自动升级链条已稳定收口
+- 外搜边界和审批边界已验证
+- legacy 路径已不再被主链依赖
 
-只有在下面条件基本满足后，再进入 Phase 5 删除 legacy：
-- host health patrol 稳定
-- CPU / Memory / Disk runtime 稳定
-- 自动 dispatch 稳定
-- 旧 generic / old patrol / old disk 兼容路径不再被主流程依赖
+届时再删除：
+
+- 旧 disk_cleanup 主入口
+- 旧 patrol 深链
+- 旧 generic fallback 主路径

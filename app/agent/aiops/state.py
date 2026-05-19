@@ -33,6 +33,11 @@ class PlanExecuteState(TypedDict, total=False):
     pending_action: dict[str, Any] | None
     active_alerts: List[dict[str, Any]]
     target_alert: dict[str, Any] | None
+    abnormal_findings: List[dict[str, Any]]
+    selected_escalation_profile: dict[str, Any] | None
+    escalation_reason: str
+    host_health_evidence: dict[str, Any]
+    remediation_feedback_failed: bool
     incident_record: dict[str, Any]
     feedback: dict[str, Any]
     generated_skill_draft: str | None

@@ -1,0 +1,16 @@
+{
+  "session_id": "session-1779192326129-7jgfoq",
+  "updated_at": "2026-05-19T12:06:03.863764+00:00",
+  "context": {
+    "previous_user_query": "按你说的修改了还是没用",
+    "previous_profile_id": "cpu_pressure_profile",
+    "previous_target_object": "unknown-target",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps CPU 专项诊断报告\n## 任务与对象\n- 按你说的修改了还是没用\n- 对象：`unknown-host`\n## 本地实时证据\n- 未成功获取实时 CPU 摘要。",
+    "previous_key_evidence": [],
+    "previous_recommendations": "- 继续观察 CPU 使用率、负载与热点进程变化，确认压力是否持续。\n- 如定位到单一高 CPU 进程，优先结合服务配置、任务并发度和调用路径做进一步排查。\n- 若服务级上下文存在，可继续补充日志、工单或应用侧指标进行深挖。",
+    "previous_runbook_summary": "- 本地知识库未返回有效 CPU 处置方案。",
+    "previous_external_search_used": true,
+    "previous_action_safety_notes": "- 本轮未执行任何重启、扩容、限流或其他高风险操作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+  }
+}

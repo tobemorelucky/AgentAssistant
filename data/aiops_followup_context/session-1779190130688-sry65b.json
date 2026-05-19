@@ -1,0 +1,16 @@
+{
+  "session_id": "session-1779190130688-sry65b",
+  "updated_at": "2026-05-19T11:29:26.668153+00:00",
+  "context": {
+    "previous_user_query": "按你说的改了没用啊",
+    "previous_profile_id": null,
+    "previous_target_object": "unknown-target",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps 受控诊断结果\n## 当前请求\n- 任务：按你说的改了没用啊\n- Diagnosis intent：knowledge_only\n- 当前没有匹配到可执行的结构化诊断 Profile。\n## 已命中的技能 / Playbook",
+    "previous_key_evidence": [],
+    "previous_recommendations": "- 需要为该类问题补充 execution_profile，并定义 required_evidence_slots、stop_rules 和 verifier 规则。\n- 在对应 Profile 接入新的 Investigation Runtime 之前，系统会优先选择受控结束，而不是继续做无证据长链推断。",
+    "previous_runbook_summary": "",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": ""
+  }
+}

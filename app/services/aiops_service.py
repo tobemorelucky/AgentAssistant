@@ -300,6 +300,60 @@ class AIOpsService:
                 or followup_context.build_previous_aiops_context(snapshot["state"])
             )
         followup_relation = followup_context.classify_followup_relation(user_input, previous_aiops_context)
+        followup_has_context = bool(previous_aiops_context and previous_aiops_context.get("previous_user_query"))
+        followup_should_bypass_skill_router = followup_relation.get("relation_type") in {
+            "dependent_followup",
+        } or (followup_relation.get("relation_type") == "ambiguous" and followup_has_context)
+        initial_trace_events: list[dict[str, Any]] = []
+        if followup_has_context:
+            initial_trace_events.append(
+                create_trace_event(
+                    session_id=session_id,
+                    node="followup_gate",
+                    status="success",
+                    title="Previous AIOps context loaded",
+                    result_summary=str(previous_aiops_context.get("previous_profile_id") or "previous_context_available"),
+                    metadata={
+                        "previous_profile_id": previous_aiops_context.get("previous_profile_id"),
+                        "previous_target_object": previous_aiops_context.get("previous_target_object"),
+                    },
+                )
+            )
+        initial_trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="followup_gate",
+                status="success",
+                title="Follow-up relation classified",
+                result_summary=str(followup_relation.get("relation_type") or "independent"),
+                metadata={
+                    "relation_type": followup_relation.get("relation_type"),
+                    "reason": followup_relation.get("reason"),
+                    "recommended_handling": followup_relation.get("recommended_handling"),
+                },
+            )
+        )
+        if remediation_feedback_failed:
+            initial_trace_events.append(
+                create_trace_event(
+                    session_id=session_id,
+                    node="followup_gate",
+                    status="warning",
+                    title="Remediation feedback failed detected",
+                    result_summary="The user indicates that previous remediation advice did not work.",
+                )
+            )
+        if followup_should_bypass_skill_router:
+            initial_trace_events.append(
+                create_trace_event(
+                    session_id=session_id,
+                    node="followup_gate",
+                    status="success",
+                    title="Follow-up branch entered",
+                    result_summary=str(followup_relation.get("relation_type") or "dependent_followup"),
+                    metadata={"entry_node": NODE_PLANNER},
+                )
+            )
 
         if snapshot and snapshot.get("state"):
             state = snapshot["state"]
@@ -329,14 +383,14 @@ class AIOpsService:
             "last_investigation_slot": None,
             "stop_decision": None,
             "plan_source": "",
-            "entry_node": NODE_SKILL_ROUTER,
+            "entry_node": NODE_PLANNER if followup_should_bypass_skill_router else NODE_SKILL_ROUTER,
             "status": "running",
             "plan": [],
             "past_steps": [],
             "response": "",
             "matched_skills": [],
             "similar_incidents": [],
-            "trace_events": [],
+            "trace_events": initial_trace_events,
             "tools_used": [],
             "verifier_result": {},
             "pending_action": None,
@@ -469,6 +523,16 @@ class AIOpsService:
         mode: str = "default",
     ) -> AsyncGenerator[dict[str, Any], None]:
         current_state = self._build_initial_state(user_input, session_id, mode)
+
+        if current_state.get("trace_events"):
+            runtime_store.save_session(
+                session_id,
+                current_state,
+                current_state.get("status", "running"),
+            )
+            for trace_event in current_state.get("trace_events", []):
+                append_trace_event(session_id, trace_event)
+                yield {"type": "trace", "stage": "followup_gate", "trace": trace_event}
 
         if current_state.get("status") == "paused" and current_state.get("pending_action"):
             pending_action = current_state["pending_action"]

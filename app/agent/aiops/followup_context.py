@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import Any
 
 
@@ -38,6 +39,30 @@ INDEPENDENT_KEYWORDS = (
     "系统现在",
     "当前服务器",
     "当前主机",
+)
+
+REMEDIATION_REFERENCE_TOKENS = (
+    "按你说的",
+    "按你的建议",
+    "按之前的建议",
+    "按上次的建议",
+    "重新运行",
+    "重新执行",
+    "处理了",
+    "做完之后",
+)
+
+REMEDIATION_FAILURE_TOKENS = (
+    "没效果",
+    "没有效果",
+    "没改善",
+    "没有改善",
+    "还是不行",
+    "仍然失败",
+    "依旧异常",
+    "依然不行",
+    "还是没用",
+    "方案没用",
 )
 
 
@@ -135,6 +160,27 @@ def build_previous_aiops_context(state: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def is_remediation_feedback_failed(current_user_query: str) -> bool:
+    text = (current_user_query or "").strip()
+    if not text:
+        return False
+    lowered = text.lower()
+    if any(token in text for token in DEPENDENT_FOLLOWUP_KEYWORDS if token not in {"怎么修", "那怎么修", "为什么建议", "为什么你建议", "这个安全吗"}):
+        return True
+    if any(token in text for token in REMEDIATION_FAILURE_TOKENS):
+        return True
+    if any(token in text for token in REMEDIATION_REFERENCE_TOKENS) and any(
+        token in text for token in REMEDIATION_FAILURE_TOKENS
+    ):
+        return True
+    patterns = (
+        r"重新(运行|执行).*(没效果|没有效果|还是不行|仍然失败)",
+        r"(按你说的|按你的建议|按之前的建议).*(没效果|没有效果|还是不行|没改善|依旧异常)",
+        r"(处理了|做完之后).*(没效果|没有改善|依旧异常)",
+    )
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
 def classify_followup_relation(current_user_query: str, previous_aiops_context: dict[str, Any] | None) -> dict[str, str]:
     text = (current_user_query or "").strip()
     lowered = text.lower()
@@ -154,7 +200,7 @@ def classify_followup_relation(current_user_query: str, previous_aiops_context: 
             "recommended_handling": "new_diagnosis",
         }
 
-    if any(keyword in text for keyword in DEPENDENT_FOLLOWUP_KEYWORDS):
+    if any(keyword in text for keyword in DEPENDENT_FOLLOWUP_KEYWORDS) or is_remediation_feedback_failed(text):
         if has_previous:
             return {
                 "relation_type": "dependent_followup",

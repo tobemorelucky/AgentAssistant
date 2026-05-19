@@ -73,6 +73,14 @@ def test_followup_relation_ambiguous_without_previous_context():
     assert relation["recommended_handling"] == "followup_decision"
 
 
+def test_remediation_feedback_failed_matches_retry_failure_variants():
+    assert followup_context.is_remediation_feedback_failed("按你说的重新运行了没有效果") is True
+    assert followup_context.is_remediation_feedback_failed("按你说的重新执行了还是不行") is True
+    assert followup_context.is_remediation_feedback_failed("这个方案没用，继续查别的方法") is True
+    assert followup_context.is_remediation_feedback_failed("做完之后没有改善，依旧异常") is True
+    assert followup_context.is_remediation_feedback_failed("为什么你建议先观察热点进程？") is False
+
+
 def test_previous_aiops_context_is_compacted_from_report_and_evidence():
     state = {
         "input": "请检查服务器当前磁盘空间使用情况，并分析主要占用来源。",

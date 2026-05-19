@@ -353,12 +353,24 @@ async def _resolve_followup_resolution(
                 "external_search_query": "",
             }
         elif remediation_feedback_failed:
-            payload = {
-                "resolution": "retrieve_more_local_knowledge",
-                "reason": "The previous advice was ineffective, so gather stronger local knowledge first.",
-                "local_knowledge_query": input_text,
-                "external_search_query": "",
-            }
+            previous_profile_id = str(previous_aiops_context.get("previous_profile_id") or "").strip()
+            previous_target_object = str(previous_aiops_context.get("previous_target_object") or "").strip()
+            runbook_used = bool(previous_aiops_context.get("previous_runbook_summary"))
+            external_already_used = bool(previous_aiops_context.get("previous_external_search_used"))
+            if runbook_used and not external_already_used:
+                payload = {
+                    "resolution": "use_tavily_external_search",
+                    "reason": "The previous local runbook guidance did not resolve the issue, so external references are justified.",
+                    "local_knowledge_query": "",
+                    "external_search_query": f"{previous_profile_id} {previous_target_object} troubleshooting".strip(),
+                }
+            else:
+                payload = {
+                    "resolution": "retrieve_more_local_knowledge",
+                    "reason": "The previous advice was ineffective, so gather stronger local knowledge first.",
+                    "local_knowledge_query": input_text,
+                    "external_search_query": "",
+                }
         elif any(token in lowered for token in ("继续", "再看看", "再查")):
             payload = {
                 "resolution": "rerun_same_profile",

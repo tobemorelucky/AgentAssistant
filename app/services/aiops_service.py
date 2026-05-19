@@ -36,20 +36,6 @@ DEFAULT_AIOPS_TASK = (
     "本地知识库和 Runbook 继续排查，并明确标注证据边界与风险提示。"
 )
 
-REMEDIATION_FEEDBACK_TOKENS = (
-    "按你说的做了",
-    "还是没效果",
-    "还是没有效果",
-    "没效果",
-    "继续查",
-    "继续查别的方法",
-    "这个办法没用",
-    "清理后还是不行",
-    "还有其他办法吗",
-    "继续看看",
-)
-
-
 class AIOpsService:
     """Governed AIOps Agent platform service."""
 
@@ -306,9 +292,9 @@ class AIOpsService:
         snapshot = runtime_store.load_session(session_id)
         pending_payload = runtime_store.load_pending_actions(session_id)
         pending_status = pending_payload.get("status")
-        remediation_feedback_failed = any(token in (user_input or "") for token in REMEDIATION_FEEDBACK_TOKENS)
-        previous_aiops_context = None
-        if snapshot and snapshot.get("state"):
+        remediation_feedback_failed = followup_context.is_remediation_feedback_failed(user_input or "")
+        previous_aiops_context = runtime_store.load_previous_aiops_context(session_id)
+        if not previous_aiops_context and snapshot and snapshot.get("state"):
             previous_aiops_context = (
                 snapshot["state"].get("previous_aiops_context")
                 or followup_context.build_previous_aiops_context(snapshot["state"])
@@ -525,6 +511,7 @@ class AIOpsService:
             runtime_store.clear_pending_actions(session_id)
             current_state["incident_record"] = build_incident_record(current_state)
             current_state["previous_aiops_context"] = followup_context.build_previous_aiops_context(current_state)
+            runtime_store.save_previous_aiops_context(session_id, current_state["previous_aiops_context"])
             runtime_store.save_session(session_id, current_state, "completed")
             yield {
                 "type": "complete",

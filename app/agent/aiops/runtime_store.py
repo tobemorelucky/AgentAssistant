@@ -13,6 +13,7 @@ DATA_DIR = ROOT_DIR / "data"
 RUNTIME_DIR = DATA_DIR / "runtime_sessions"
 PENDING_DIR = DATA_DIR / "pending_actions"
 INCIDENT_DIR = DATA_DIR / "incident_memory"
+FOLLOWUP_CONTEXT_DIR = DATA_DIR / "aiops_followup_context"
 
 
 def _now_iso() -> str:
@@ -25,6 +26,10 @@ def _runtime_path(session_id: str) -> Path:
 
 def _pending_path(session_id: str) -> Path:
     return PENDING_DIR / f"{session_id}.json"
+
+
+def _followup_context_path(session_id: str) -> Path:
+    return FOLLOWUP_CONTEXT_DIR / f"{session_id}.json"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -85,7 +90,7 @@ class RuntimeStore:
     """Manage session snapshots and pending approval actions."""
 
     def __init__(self) -> None:
-        for directory in (RUNTIME_DIR, PENDING_DIR, INCIDENT_DIR):
+        for directory in (RUNTIME_DIR, PENDING_DIR, INCIDENT_DIR, FOLLOWUP_CONTEXT_DIR):
             directory.mkdir(parents=True, exist_ok=True)
 
     def load_session(self, session_id: str) -> dict[str, Any] | None:
@@ -104,6 +109,23 @@ class RuntimeStore:
         runtime_path = _runtime_path(session_id)
         if runtime_path.exists():
             runtime_path.unlink()
+        followup_path = _followup_context_path(session_id)
+        if followup_path.exists():
+            followup_path.unlink()
+
+    def load_previous_aiops_context(self, session_id: str) -> dict[str, Any]:
+        payload = _read_json(_followup_context_path(session_id), {})
+        if isinstance(payload, dict) and isinstance(payload.get("context"), dict):
+            return payload["context"]
+        return {}
+
+    def save_previous_aiops_context(self, session_id: str, context: dict[str, Any]) -> None:
+        payload = {
+            "session_id": session_id,
+            "updated_at": _now_iso(),
+            "context": context or {},
+        }
+        _write_json(_followup_context_path(session_id), payload)
 
     def save_pending_action(self, session_id: str, action: dict[str, Any]) -> None:
         payload = {

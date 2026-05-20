@@ -1,0 +1,20 @@
+{
+  "session_id": "session-1779245579081-piufdp",
+  "updated_at": "2026-05-20T02:53:51.702652+00:00",
+  "context": {
+    "previous_user_query": "CPU满了怎么办",
+    "previous_profile_id": "cpu_pressure_profile",
+    "previous_target_object": "demo-server-01",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps CPU 专项诊断报告\n## 任务与对象\n- CPU满了怎么办\n- 对象：`demo-server-01`\n## 本地实时证据\n- 主机 `demo-server-01` 当前 CPU 使用率为 `88.7%`。",
+    "previous_key_evidence": [
+      "cpu_summary: usage=88.7%",
+      "top_cpu_processes: top=python-worker",
+      "cpu_runbook: 【参考资料 1】\n标题: CPU使用率过高告警处理方案 > 告警名称\n来源: cpu_high_usage.md\n内容:\n# CPU使用率过高告警处理方案  \n"
+    ],
+    "previous_recommendations": "- 继续观察 CPU 使用率、负载与热点进程变化，确认压力是否持续。\n- 如定位到单一高 CPU 进程，优先结合服务配置、任务并发度和调用路径做进一步排查。\n- 若服务级上下文存在，可继续补充日志、工单或应用侧指标进行深挖。",
+    "previous_runbook_summary": "- 本地 Runbook 摘要：【参考资料 1】\n标题: CPU使用率过高告警处理方案 > 告警名称\n来源: cpu_high_usage.md\n内容:",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": "- 本轮未执行任何重启、扩容、限流或其他高风险操作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+  }
+}

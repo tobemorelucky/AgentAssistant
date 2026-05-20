@@ -1,0 +1,138 @@
+{
+  "session_id": "session-1779245579081-piufdp",
+  "status": "running",
+  "updated_at": "2026-05-20T02:54:13.736826+00:00",
+  "state": {
+    "session_id": "session-1779245579081-piufdp",
+    "input": "为什么你建议先观察热点进程？",
+    "mode": "custom",
+    "diagnosis_intent": "knowledge_only",
+    "selected_profile": null,
+    "evidence_store": {},
+    "investigation_round": 0,
+    "no_progress_rounds": 0,
+    "last_investigation_slot": null,
+    "stop_decision": null,
+    "plan_source": "",
+    "entry_node": "skill_router",
+    "status": "running",
+    "plan": [],
+    "past_steps": [],
+    "response": "",
+    "matched_skills": [],
+    "similar_incidents": [],
+    "trace_events": [
+      {
+        "trace_id": "18101a8d-d637-4ea6-b143-65226c16337d",
+        "session_id": "session-1779245579081-piufdp",
+        "node": "followup_gate",
+        "status": "success",
+        "title": "Previous AIOps context loaded",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "cpu_pressure_profile",
+        "started_at": "2026-05-20T02:53:59.789338+00:00",
+        "ended_at": "2026-05-20T02:53:59.789338+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "previous_profile_id": "cpu_pressure_profile",
+          "previous_target_object": "demo-server-01"
+        }
+      },
+      {
+        "trace_id": "7b3a01e0-b3cc-4824-a62e-6dc02c00d2db",
+        "session_id": "session-1779245579081-piufdp",
+        "node": "followup_gate",
+        "status": "success",
+        "title": "Follow-up relation classified",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "dependent_followup",
+        "started_at": "2026-05-20T02:53:59.789360+00:00",
+        "ended_at": "2026-05-20T02:53:59.789360+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "relation_type": "dependent_followup",
+          "reason": "query_refers_to_previous_advice_or_previous_result",
+          "recommended_handling": "followup_decision"
+        }
+      },
+      {
+        "trace_id": "382d82e6-5cad-4fd0-b1b6-83789be4e456",
+        "session_id": "session-1779245579081-piufdp",
+        "node": "followup_gate",
+        "status": "success",
+        "title": "Follow-up branch entered",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "dependent_followup",
+        "started_at": "2026-05-20T02:53:59.789368+00:00",
+        "ended_at": "2026-05-20T02:53:59.789368+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "entry_node": "planner"
+        }
+      },
+      {
+        "trace_id": "5d35c677-305c-4fb0-8fae-149c3a257955",
+        "session_id": "session-1779245579081-piufdp",
+        "node": "skill_router",
+        "status": "success",
+        "title": "Matched 0 skills",
+        "tool_name": null,
+        "tool_args": {},
+        "result_summary": "No skills matched",
+        "started_at": "2026-05-20T02:54:13.736163+00:00",
+        "ended_at": "2026-05-20T02:54:13.736163+00:00",
+        "duration_ms": 0,
+        "metadata": {
+          "matched_skills": [],
+          "skill_modes": {},
+          "selected_profile": null,
+          "diagnosis_intent": "knowledge_only"
+        }
+      }
+    ],
+    "tools_used": [],
+    "verifier_result": {
+      "findings": [],
+      "suggested_next_steps": [],
+      "missing_evidence": [],
+      "risk_warnings": []
+    },
+    "pending_action": null,
+    "active_alerts": [],
+    "target_alert": null,
+    "abnormal_findings": [],
+    "selected_escalation_profile": null,
+    "escalation_reason": "",
+    "host_health_evidence": {},
+    "remediation_feedback_failed": false,
+    "previous_aiops_context": {
+      "previous_user_query": "CPU满了怎么办",
+      "previous_profile_id": "cpu_pressure_profile",
+      "previous_target_object": "demo-server-01",
+      "previous_target_alert": {},
+      "previous_diagnosis_summary": "# AIOps CPU 专项诊断报告\n## 任务与对象\n- CPU满了怎么办\n- 对象：`demo-server-01`\n## 本地实时证据\n- 主机 `demo-server-01` 当前 CPU 使用率为 `88.7%`。",
+      "previous_key_evidence": [
+        "cpu_summary: usage=88.7%",
+        "top_cpu_processes: top=python-worker",
+        "cpu_runbook: 【参考资料 1】\n标题: CPU使用率过高告警处理方案 > 告警名称\n来源: cpu_high_usage.md\n内容:\n# CPU使用率过高告警处理方案  \n"
+      ],
+      "previous_recommendations": "- 继续观察 CPU 使用率、负载与热点进程变化，确认压力是否持续。\n- 如定位到单一高 CPU 进程，优先结合服务配置、任务并发度和调用路径做进一步排查。\n- 若服务级上下文存在，可继续补充日志、工单或应用侧指标进行深挖。",
+      "previous_runbook_summary": "- 本地 Runbook 摘要：【参考资料 1】\n标题: CPU使用率过高告警处理方案 > 告警名称\n来源: cpu_high_usage.md\n内容:",
+      "previous_external_search_used": false,
+      "previous_action_safety_notes": "- 本轮未执行任何重启、扩容、限流或其他高风险操作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+    },
+    "followup_relation": {
+      "relation_type": "dependent_followup",
+      "reason": "query_refers_to_previous_advice_or_previous_result",
+      "recommended_handling": "followup_decision"
+    },
+    "followup_resolution": null,
+    "incident_record": {},
+    "feedback": {},
+    "generated_skill_draft": null,
+    "memory_persisted": false
+  }
+}

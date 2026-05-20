@@ -1,0 +1,20 @@
+{
+  "session_id": "session-1779245369987-cw60gv",
+  "updated_at": "2026-05-20T02:51:46.679312+00:00",
+  "context": {
+    "previous_user_query": "系统现在内存情况如何？",
+    "previous_profile_id": "memory_pressure_profile",
+    "previous_target_object": "he-VMware-Virtual-Platform",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps 内存专项诊断报告\n## 任务与对象\n- 系统现在内存情况如何？\n- 对象：`he-VMware-Virtual-Platform`\n## 本地实时证据\n- 主机 `he-VMware-Virtual-Platform` 当前内存使用率为 `17.1%`。",
+    "previous_key_evidence": [
+      "memory_summary: usage=17.1%",
+      "top_memory_processes: top=openclaw-gateway",
+      "memory_runbook: 【参考资料 1】\n标题: 内存使用率过高告警处理方案 > 排查步骤\n来源: memory_high_usage.md\n内容:\n## 排查步骤  \n### 步骤1"
+    ],
+    "previous_recommendations": "- 继续观察内存使用率、可用内存与热点进程变化，确认压力是否持续。\n- 优先核对大内存进程是否存在缓存膨胀、批处理峰值或异常对象堆积。\n- 如服务级上下文存在，可继续补充日志、工单或应用侧指标进行深挖。",
+    "previous_runbook_summary": "- 本地 Runbook 摘要：【参考资料 1】\n标题: 内存使用率过高告警处理方案 > 排查步骤\n来源: memory_high_usage.md\n内容:",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": "- 本轮未执行任何重启、扩容、限流或其他高风险操作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+  }
+}

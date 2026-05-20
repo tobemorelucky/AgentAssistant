@@ -1,341 +1,265 @@
 # AIOps Investigation Architecture
 
-## Phase 4.9C：RAG 边界与 AIOps Follow-up Gate
+## 概述
 
-这一阶段的目标不是继续扩新 Profile，而是先把“普通知识问答”和“实时 AIOps 诊断”的边界收紧，并给 AIOps 多轮追问加上一层稳定的上下文判定。
+AgentAssistant 的 AIOps 侧已经完成从旧式分叉诊断链路向统一 Investigation Runtime 的迁移。
 
-### 1. 普通 RAG 与 AIOps 的职责边界
+当前正式目标是：
+- 让实时诊断只依赖可解释、可收敛、可治理的执行路径
+- 把普通 RAG 与实时 AIOps 明确分层
+- 让默认巡检、专项诊断、追问补充共享同一套状态与证据语义
 
-- 普通 RAG：
-  - 只回答知识库、Runbook、历史案例层面的问题；
-  - 不直接读取实时 CPU / 内存 / 磁盘 / 当前系统状态；
-  - 不允许把 demo / mock 数据写成“当前事实”。
-- AIOps：
-  - 用于实时巡检、专项诊断、证据采集和受控升级。
+## 为什么要重构
 
-因此，当用户在普通 RAG 模式下问“请检查服务器当前磁盘空间使用情况”“当前服务器是否异常”这类实时问题时，系统应明确提示切换到 AIOps，而不是把知识库示例包装成实时结论。
+旧架构存在几个长期问题：
+- generic 自由长链容易出现 Planner 与 Executor 脱节
+- verifier 打回后会把自由文本建议重新塞回 plan，导致 Trace 持续增长
+- 旧 skill 会把专家经验直接写成执行计划，造成证据不足却过度推断
+- 普通 RAG 与实时 AIOps 语义混用，容易把 mock/demo 数据误写成当前事实
 
-### 2. Follow-up Context Gate
+因此，当前架构的原则是：
+- 不再依赖自由长链作为默认诊断入口
+- 一切正式专项诊断都必须落到 execution profile + runtime
+- Follow-up 必须依赖上一轮上下文，而不是重新猜测用户意图
 
-AIOps 多轮对话引入 `relation_type` 判定：
-
-- `independent`
-  - 当前问题不依赖上一轮诊断，按新的诊断请求处理。
-- `dependent_followup`
-  - 当前问题依赖上一轮诊断结果，例如：
-    - 为什么建议这样做
-    - 这个安全吗
-    - 按你说的做了还是没效果
-    - 继续查别的方法
-- `ambiguous`
-  - 例如“继续”“再看看”“这个呢”，需要结合最近上下文解析。
-
-### 3. PreviousAIOpsContext
-
-系统不会把完整 Trace 全量塞回下一轮，而是保留压缩摘要：
-
-- `previous_user_query`
-- `previous_profile_id`
-- `previous_target_object`
-- `previous_target_alert`
-- `previous_diagnosis_summary`
-- `previous_key_evidence`
-- `previous_recommendations`
-- `previous_runbook_summary`
-- `previous_external_search_used`
-- `previous_action_safety_notes`
-
-### 4. Follow-up Resolution
-
-如果判定为 `dependent_followup`，系统会把当前追问和上一轮摘要一起交给模型，模型只在以下几类动作中做选择：
-
-- `answer_from_previous_context`
-- `rerun_same_profile`
-- `retrieve_more_local_knowledge`
-- `use_tavily_external_search`
-- `ask_for_user_clarification`
-
-### 5. Tavily 的受控触发条件
-
-Tavily 只在以下条件下允许触发：
-
-1. 本地知识不足
-   - `retrieve_knowledge` 无结果或结果质量不足；
-   - 无法基于本地 Runbook 形成明确处理建议。
-2. 依赖上一轮的用户反馈明确表示已有建议无效
-   - 例如“按你说的做了，还是没效果”；
-   - 此时也必须先关联上一轮 AIOps 上下文，再由模型决定是否触发外部搜索。
-
-Tavily 输出始终标记为 `external_reference`，不得伪装成本地实时证据。
-
-## 目标
-
-AgentAssistant 的 AIOps 能力正在从“模板式诊断链”迁移到统一的 Evidence-Driven Investigation Engine。
-
-核心原则：
-
-1. 用 Profile 定义诊断边界
-2. 用 Runtime 执行证据驱动流程
-3. 用 Evidence Store 约束事实来源
-4. 用 StopController 防止无限循环
-5. 用 Verifier 校验“事实 / 推断 / 参考 / 缺口”的边界
-
-## 为什么旧架构不稳定
-
-旧 AIOps 同时存在多条不统一链路：
-
-- disk_cleanup 专项确定性分支
-- default patrol 模板分支
-- custom generic + LLM fallback 长链
-
-典型问题包括：
-
-- Planner 写的步骤和 Executor 实际执行的工具不一致
-- Verifier 把自由文本 `suggested_next_steps` 回填成新的计划
-- 证据不足时依然生成过度推断结论
-- Trace 容易持续增长，难以收口
-
-## 核心构件
-
-### DiagnosisProfile
-
-Profile 定义一类诊断任务的固定边界：
-
-- `profile_id`
-- `supported_intents`
-- `resource_type`
-- `required_evidence_slots`
-- `conditional_evidence_slots`
-- `reference_evidence_slots`
-- `stop_rules`
-- `report_schema`
-
-### InvestigationRuntime
-
-Runtime 是某个 Profile 的执行器。当前统一接口包括：
-
-1. `build_initial_tasks`
-2. `normalize_result`
-3. `update_evidence_store`
-4. `build_follow_up_tasks`
-5. `decide_stop`
-6. `build_report`
-7. `verify_report`
-8. `summarize_task_result`
-9. `summarize_evidence_store`
-10. `compute_no_progress_rounds`
-11. `build_escalation`
-
-### Evidence Store
-
-Evidence Store 记录每个证据槽的状态：
-
-- `missing`
-- `collected`
-- `failed`
-- `partial`
-
-以及：
-
-- `source`
-- `payload`
-- `attempts`
-- `quality`
-- `error_message`
-
-### StopController
-
-StopController 的职责是决定：
-
-- 继续补证据
-- 正常收口
-- 带限制收口
-
-它阻止：
-
-- 无限补查同一证据槽
-- 无进展反复循环
-- required evidence 明显失败时仍伪装成“已完成”
-
-## Skill 的新定位
-
-Skill 不再默认等于“执行模板”，而是分成三类：
-
-- `execution_profile`
-- `reference_playbook`
-- `draft`
-
-含义如下：
-
-- `execution_profile`：允许驱动正式 Investigation Runtime
-- `reference_playbook`：只作为知识参考，不直接生成执行计划
-- `draft`：不进入正式执行
-
-## 已完成阶段
+## 演进阶段
 
 ### Phase 1：架构止血
-
 - 新增 investigation 基础模型
-- 扩展 `PlanExecuteState`
-- 旧 Skill 默认降级为 `reference_playbook`
-- 未命中 `execution_profile` 的 custom AIOps 不再进入旧 generic 长链
-- Verifier 不再把自由文本 `suggested_next_steps` 直接回填为 plan
+- Skill 拆分为：
+  - `execution_profile`
+  - `reference_playbook`
+  - `draft`
+- 未命中 execution profile 的 custom AIOps 不再进入旧 generic 长链
 
-### Phase 2：Disk Runtime
-
-完成 `disk_pressure_profile` 迁移：
-
-- InvestigationTask
-- Evidence Store
-- Follow-up Tasks
-- StopController
-- Evidence-grounded Report
-- Disk Verifier
+### Phase 2：Disk Runtime 迁移
+- `disk_pressure_profile` 正式迁移到 Evidence-Driven Investigation Runtime
+- 引入：
+  - InvestigationTask
+  - Evidence Store
+  - StopController
+  - Disk 专属报告与 verifier 逻辑
 
 ### Phase 3：Runtime Registry + Patrol Dispatcher
-
-- 引入统一 runtime registry
-- 默认巡检不再直接走 generic 深链
-- `patrol_dispatch_profile` 成为内部告警分发能力
+- 抽出 runtime registry
+- 默认巡检从旧 patrol 深链切到 dispatcher / runtime 体系
 
 ### Phase 4：CPU / Memory Runtime
+- 新增：
+  - `cpu_pressure_profile`
+  - `memory_pressure_profile`
+- 接入 Host Agent 的 CPU / Memory 真实接口
 
-完成：
-
-- `cpu_pressure_profile`
-- `memory_pressure_profile`
-- `CpuInvestigationRuntime`
-- `MemoryInvestigationRuntime`
-
-第一版只聚焦：
-
-- 实时摘要
-- 热点进程
-- 本地 Runbook / RAG
-- 稳定收口
-
-暂不强制引入日志 / 工单 / 更深服务级证据。
-
-### Phase 4.5：真实 Host Alert 与 CPU 字段兼容
-
-- Monitor Provider 支持真实 Host Agent
-- CPU summary 兼容 `cpu_percent / logical_cpu_count / load_1m`
-- 新增 Alert Provider：
+### Phase 4.5：真实主机语义校正
+- 修复 `cpu_summary` / `memory_summary` 与真实 Host Agent 字段兼容
+- 把默认巡检告警源升级为：
   - `mock`
   - `remote_host`
   - `disabled`
 
-### Phase 4.8A：Host Health Patrol
+### Phase 4.8：Host Health Patrol
+- 默认巡检升级为 `host_health_patrol_profile`
+- 至少采集：
+  - CPU
+  - 内存
+  - 磁盘
+  - 活跃告警
 
-默认巡检升级为 `host_health_patrol_profile`，先采集：
+### Phase 4.9：Agentic Escalation + Follow-up
+- 默认巡检发现异常后可自动升级到专项 Profile
+- Follow-up Context Gate 接通
+- 解释型追问与失败反馈型追问分流
+- Tavily / `web_search` 仅在必要时受控触发
 
-- `cpu_summary`
-- `memory_summary`
-- `disk_usage`
-- optional `active_alerts`
+### Phase 5：Legacy Cleanup
+- 清理旧 generic 深链
+- 下线旧 disk cleanup 主入口
+- 下线旧 patrol 深链
+- 固化正式文档与验收矩阵
 
-这一阶段的默认巡检可以输出主机健康结论，但异常时仍主要停留在“建议进入专项诊断”。
+## 当前正式架构
 
-### Phase 4.9B：Agentic Escalation + 本地优先 + 外搜受控触发
+```mermaid
+flowchart TD
+  A["AIOps Request"] --> B["Build Initial State"]
+  B --> C["Load PreviousAIOpsContext"]
+  C --> D["Follow-up Context Gate"]
+  D -->|independent| E["Skill Router"]
+  D -->|dependent / ambiguous with context| F["Planner Follow-up Branch"]
+  E --> G["Resolve Selected Profile"]
+  G --> H["Runtime Registry"]
+  H --> I["Investigation Runtime"]
+  I --> J["Executor"]
+  J --> K["Evidence Store"]
+  K --> L["Replanner + StopController"]
+  L -->|need more evidence| J
+  L -->|finalize| M["Report Builder"]
+  M --> N["Verifier"]
+  N -->|passed| O["Complete"]
+  N -->|runtime says continue| L
+```
 
-这是当前最新阶段。
+## 普通 RAG 与 AIOps 的边界
 
-#### 1. 巡检异常自动升级
+### 普通 RAG
+- 只做知识问答
+- 不读取实时服务器状态
+- 若用户询问“当前 CPU/内存/磁盘/系统情况”，会受控提示切换 AIOps
+- 若引用知识库案例，必须标注为历史示例或参考
 
-`host_health_patrol_profile` 在 required evidence 齐备后，会生成：
+### AIOps
+- 只在 AIOps 模式下做实时诊断
+- 优先采集本地实时证据
+- 再补本地上下文证据
+- 再补本地 Runbook / 外部参考
 
-- `abnormal_findings`
-- `selected_escalation_profile`
-- `escalation_reason`
-- `target_alert`
+## 默认巡检
 
-优先级规则：
-
-1. 若存在 active alert，优先选最高 severity alert
-2. 若无 active alert，再按 CPU / Memory / Disk 的异常 severity 排序
-
-随后系统会自动切换到对应专项 Profile，而不是只停留在“建议进入专项诊断”。
-
-#### 2. 本地证据优先级
-
-专项 Profile 按以下顺序工作：
-
-1. 本地实时证据
-2. 本地上下文证据
-3. 本地 Runbook / RAG
-4. 外部补充参考
-
-#### 3. Tavily 外搜触发边界
-
-`web_search` 不是默认步骤。
-
-只在两类场景触发：
-
-1. 本地 Runbook / RAG 不足
-   - 无内容
-   - 无引用文档
-   - 无法形成有效处理建议
-2. 用户反馈已有建议无效
-   - “还是没用”
-   - “处理后仍然不行”
-   - “继续查”
-   - “还有其他办法吗”
-
-外搜结果必须标记为 `external_reference`，只用于补充思路，不能伪装成本地实时证据。
-
-#### 4. 处置动作分级
-
-专项报告统一输出：
-
-- 低风险建议
-- 需人工确认 / 审批的动作
-- 禁止自动执行 / 高风险动作
-
-并明确写明：
-
-- 本轮未自动执行危险操作
-- 若未来接入危险操作工具，必须经过审批节点
-
-## 当前默认巡检语义
-
-当前默认巡检已经变成：
-
-1. 执行主机健康巡检
-2. 若健康，则直接输出健康结论
-3. 若异常，则自动选择最高优先级异常
-4. 升级进入 CPU / Memory / Disk 对应专项 Profile
-5. 继续执行本地实时证据 + 本地知识优先的专项诊断
-
-## 当前可执行 Profile
-
+默认巡检当前的正式入口是：
 - `host_health_patrol_profile`
+
+它的职责是：
+1. 采集 CPU / 内存 / 磁盘基础健康摘要
+2. 读取活跃告警
+3. 识别异常
+4. 自动升级进入 CPU / Memory / Disk 对应专项 Profile
+
+它不再只是“查告警然后结束”。
+
+## 专项 Profile
+
+当前正式可执行的 execution profile：
 - `cpu_pressure_profile`
 - `memory_pressure_profile`
 - `disk_pressure_profile`
+- `host_health_patrol_profile`
 
-## 仍保留的 legacy
+每个 profile 都通过 runtime registry 暴露统一接口：
+- `build_initial_tasks`
+- `update_evidence_store`
+- `build_follow_up_tasks`
+- `decide_stop`
+- `build_report`
+- `verify_report`
 
-目前仍保留但不作为默认主路径的 legacy 包括：
+## 证据优先级
 
-- old `disk_cleanup` 兼容逻辑
-- old patrol 深链兼容逻辑
-- old generic fallback compatibility
+### 第一层：本地实时证据
+- CPU：
+  - `get_cpu_summary`
+  - `list_top_cpu_processes`
+- Memory：
+  - `get_memory_summary`
+  - `list_top_memory_processes`
+- Disk：
+  - `get_disk_usage`
+  - `list_large_directories`
+  - `list_large_files`
+  - `query_docker_disk_usage`
+  - `query_deleted_open_files`
 
-这些逻辑将在 Phase 5 再统一清理，不在当前阶段贸然删除。
+### 第二层：本地上下文证据
+只有在存在 `service_name` / `alert_name` / 目标对象时，才会补查：
+- `search_historical_tickets`
+- `search_log`
+- `get_service_info`
 
-## Phase 5 之后再做什么
+### 第三层：本地 Runbook / RAG
+- CPU 使用率过高排查 runbook
+- 内存使用率过高排查 runbook
+- 磁盘使用率过高清理 runbook
 
-当前不进入 Phase 5。
+### 第四层：外部补充参考
+只有在必要时才触发 `web_search`
 
-进入 Phase 5 的前提是：
+## Follow-up Context Gate
 
-- 默认巡检 + CPU / Memory / Disk 专项诊断已稳定
-- 自动升级链条已稳定收口
-- 外搜边界和审批边界已验证
-- legacy 路径已不再被主链依赖
+Follow-up Gate 会把当前问题分为：
+- `independent`
+- `dependent_followup`
+- `ambiguous`
 
-届时再删除：
+### independent
+示例：
+- CPU 状况怎么样？
+- 请检查内存情况
+- 请开始一次巡检
 
-- 旧 disk_cleanup 主入口
-- 旧 patrol 深链
-- 旧 generic fallback 主路径
+这类问题会作为新的实时诊断入口。
+
+### dependent_followup
+示例：
+- 为什么你建议先观察热点进程？
+- 为什么建议先看 Docker build cache？
+- 按你说的做了还是没效果
+- 继续查别的方法
+
+这类问题会恢复 `previous_aiops_context`，优先走 follow-up 处理。
+
+### ambiguous
+示例：
+- 再看看
+- 继续
+- 这个呢
+
+若存在上一轮上下文，会尽量按 follow-up 处理；否则受控返回澄清提示。
+
+## Tavily / web_search 触发规则
+
+`web_search` 不是默认每轮都触发。
+
+当前只在两种场景允许：
+
+### 1. 本地知识不足
+- `retrieve_knowledge` 无有效结果
+- Runbook 不足以支撑新的处理建议
+- Follow-up resolver 判断需要 external reference
+
+### 2. 用户反馈上一轮建议无效
+例如：
+- 按你说的做了还是没效果
+- 重新执行后还是不行
+- 这个办法没用
+- 继续查别的思路
+
+此时系统会先恢复上一轮摘要，再由 follow-up resolver 判断是否需要触发 `web_search`。
+
+外部结果必须：
+- 标记为“外部补充参考”
+- 不混写成本地实时证据
+- 不改写为已确认现场事实
+
+## Action Safety
+
+当前系统不会自动执行高风险动作。
+
+报告只会输出动作分级：
+- 低风险建议
+- 需人工确认或审批的动作
+- 禁止自动执行或高风险动作
+
+并明确说明：
+- 本轮未执行任何重启、扩容、限流、清理或其他高风险操作
+- 若后续接入危险工具，必须经过审批节点
+
+## Legacy 保留策略
+
+Phase 5 之后，正式主路径已经不再依赖：
+- generic planner fallback
+- 旧 free-form generic diagnosis 长链
+- 旧 disk cleanup 主入口
+- 旧 patrol 深诊断链
+
+目前仍保留的兼容性内容只有两类：
+1. 受控停止结果，例如 `controlled_no_profile`
+2. 少量内部辅助模块，例如 `patrol_dispatch.py` 的 alert->profile 映射
+
+这些保留项不会重新变成正式执行主入口。
+
+## 后续建议
+
+如果后续继续提升产品质感，优先建议：
+1. 提升前端 Trace 与报告排版的一致性
+2. 为 follow-up enrichment 增加更精炼的摘要模板
+3. 固化更多 remote_host 端到端测试夹具
+4. 若审批链要上线，再把危险动作接入正式 Human-in-the-loop 节点

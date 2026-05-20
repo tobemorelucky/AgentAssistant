@@ -37,6 +37,7 @@ DEFAULT_AIOPS_TASK = (
 )
 
 FOLLOWUP_DIRECT_RESPONSE_PLAN_SOURCES = {
+    "controlled_no_profile",
     "followup_missing_context",
     "followup_clarification",
     "followup_previous_context",

@@ -29,26 +29,6 @@ HOST_HEALTH_PATROL_PROFILE = DiagnosisProfile(
     ],
 )
 
-PATROL_DISPATCH_PROFILE = DiagnosisProfile(
-    profile_id="patrol_dispatch_profile",
-    supported_intents=[DiagnosisIntent.DEFAULT_PATROL],
-    resource_type="alert_triage",
-    required_evidence_slots=["active_alerts", "target_alert"],
-    conditional_evidence_slots=[],
-    reference_evidence_slots=[],
-    stop_rules={
-        "max_rounds": 1,
-        "max_no_progress_rounds": 0,
-        "max_attempts_per_slot": 1,
-    },
-    report_schema=[
-        "巡检输入",
-        "活跃告警",
-        "分发结果",
-        "后续建议",
-    ],
-)
-
 # Compatibility alias. Default patrol now means host health patrol.
 DEFAULT_PATROL_PROFILE = HOST_HEALTH_PATROL_PROFILE
 
@@ -129,7 +109,7 @@ CPU_PRESSURE_PROFILE = DiagnosisProfile(
         "任务与对象",
         "已确认事实",
         "当前 CPU 状态",
-        "主要 CPU 消耗来源",
+        "热点 CPU 进程",
         "候选风险 / 待验证解释",
         "证据缺口",
         "处理建议",
@@ -140,7 +120,6 @@ CPU_PRESSURE_PROFILE = DiagnosisProfile(
 
 PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
     HOST_HEALTH_PATROL_PROFILE.profile_id: HOST_HEALTH_PATROL_PROFILE,
-    PATROL_DISPATCH_PROFILE.profile_id: PATROL_DISPATCH_PROFILE,
     DISK_PRESSURE_PROFILE.profile_id: DISK_PRESSURE_PROFILE,
     MEMORY_PRESSURE_PROFILE.profile_id: MEMORY_PRESSURE_PROFILE,
     CPU_PRESSURE_PROFILE.profile_id: CPU_PRESSURE_PROFILE,
@@ -148,7 +127,6 @@ PROFILE_REGISTRY: dict[str, DiagnosisProfile] = {
 
 EXECUTABLE_PROFILE_IDS = {
     HOST_HEALTH_PATROL_PROFILE.profile_id,
-    PATROL_DISPATCH_PROFILE.profile_id,
     DISK_PRESSURE_PROFILE.profile_id,
     MEMORY_PRESSURE_PROFILE.profile_id,
     CPU_PRESSURE_PROFILE.profile_id,
@@ -188,15 +166,15 @@ def infer_diagnosis_intent(
         "how to",
     )
     status_tokens = (
-        "情况如何",
-        "状态",
+        "现在情况",
+        "状况",
         "usage",
         "status",
-        "cpu 情况",
+        "cpu 状况",
         "cpu情况",
-        "内存情况",
+        "内存状况",
         "memory status",
-        "磁盘情况",
+        "磁盘状况",
     )
     if any(token in normalized for token in remediation_tokens):
         return DiagnosisIntent.REMEDIATION_REQUEST

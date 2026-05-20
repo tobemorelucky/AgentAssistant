@@ -9,29 +9,23 @@ from langchain_core.prompts import ChatPromptTemplate
 from loguru import logger
 from pydantic import BaseModel, Field
 
-from app.agent.aiops.disk_cleanup import build_disk_cleanup_plan, is_disk_cleanup_request
 from app.agent.aiops.followup_context import build_followup_context_package
 from app.agent.aiops.incident_memory import find_similar_incidents
 from app.agent.aiops.investigation import (
     build_evidence_store,
-    build_no_alert_patrol_report,
-    build_unconfigured_alert_source_report,
     build_unsupported_profile_report,
     decide_stop_action,
     get_profile,
     get_runtime,
-    resolve_alert_profile_id,
-    select_target_alert,
     supports_profile_execution,
 )
-from app.agent.aiops.patrol import build_fallback_tool_plan, format_tool_plan_step, summarize_alerts
+from app.agent.aiops.patrol import summarize_alerts
 from app.agent.aiops.profile_loader import get_agent_profile_prompt
 from app.agent.aiops.state import PlanExecuteState
 from app.agent.aiops.tool_registry import get_aiops_local_tools
 from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.agent.aiops.utils import format_tools_description, invoke_tool
 from app.agent.mcp_client import get_mcp_client_with_retry
-from app.config import config
 from app.core.llm_factory import llm_factory
 from app.tools import retrieve_knowledge
 
@@ -200,11 +194,6 @@ def _build_followup_external_unavailable_report(input_text: str) -> str:
         - 如需外部参考，请启用 `WEB_SEARCH_ENABLED=true` 并配置 `TAVILY_API_KEY`。
         """
     ).strip()
-
-
-def build_default_alert_plan(target_alert: dict[str, Any]) -> list[str]:
-    """Compatibility helper used by tests and docs."""
-    return [format_tool_plan_step(step) for step in build_fallback_tool_plan(target_alert)]
 
 
 def _skill_context(skills: list[dict[str, Any]]) -> str:
@@ -778,15 +767,6 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                         "trace_events": trace_events,
                     }
 
-    if mode == "default" and selected_profile_id == "patrol_dispatch_profile":
-        return await _dispatch_default_patrol(
-            state=state,
-            session_id=session_id,
-            selected_profile=selected_profile,
-            similar_incidents=similar_incidents,
-            tool_map=tool_map,
-        )
-
     runtime = get_runtime(selected_profile_id)
     if runtime is not None:
         profile = get_profile(selected_profile_id)
@@ -814,124 +794,11 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
             "trace_events": trace_events,
         }
 
-    # Legacy compatibility path. Phase 5 can remove this branch after full migration.
-    if is_disk_cleanup_request(input_text, matched_skills):
-        plan_steps = build_disk_cleanup_plan()
-        trace_events.append(
-            create_trace_event(
-                session_id=session_id,
-                node="planner",
-                status="success",
-                title="Legacy disk cleanup plan generated",
-                result_summary=" | ".join(plan_steps[:3]),
-                metadata={"matched_skills": [skill.get("name") for skill in matched_skills], "legacy": True},
-            )
-        )
-        return {
-            "plan": plan_steps,
-            "similar_incidents": similar_incidents,
-            "selected_profile": selected_profile,
-            "trace_events": trace_events,
-        }
-
-    if (
-        mode == "custom"
-        and not config.aiops_allow_legacy_generic_diagnosis
-        and not (selected_profile and supports_profile_execution(selected_profile.get("profile_id")))
-    ):
-        return _build_controlled_profile_gap_result(
-            session_id=session_id,
-            input_text=input_text,
-            diagnosis_intent=diagnosis_intent or "knowledge_only",
-            matched_skills=matched_skills,
-            selected_profile=selected_profile,
-            similar_incidents=similar_incidents,
-        )
-
-    agent_profile = get_agent_profile_prompt()
-    skill_context = _skill_context(matched_skills)
-    incident_context = _incident_context(similar_incidents)
-    experience_docs = ""
-    try:
-        context_str = await retrieve_knowledge.ainvoke({"query": input_text})
-        if context_str and str(context_str).strip():
-            experience_docs = str(context_str)
-    except Exception as exc:  # pragma: no cover - best effort enrichment
-        logger.warning(f"retrieve_knowledge failed in planner context: {exc}")
-
-    tools_description = format_tools_description(all_tools)
-    plan_source = "generic_llm"
-    try:
-        llm = llm_factory.create_qwen_chat_model(
-            preferred_model=config.rag_model,
-            temperature=0,
-            streaming=True,
-        )
-        planner_chain = generic_planner_prompt | llm.with_structured_output(GenericPlan)
-        plan_result = await planner_chain.ainvoke(
-            {
-                "messages": [("user", input_text)],
-                "tools_description": tools_description,
-                "experience_context": dedent(
-                    f"""
-                    ## AGENT Profile
-                    {agent_profile}
-
-                    ## Matched Skills
-                    {skill_context}
-
-                    ## Similar Incident Cases
-                    {incident_context}
-
-                    ## Active Alerts
-                    {summarize_alerts(active_alerts)}
-
-                    ## Selected Target Alert
-                    {summarize_result(target_alert)}
-
-                    ## Knowledge Context
-                    {experience_docs or "No additional runbook context."}
-                    """
-                ).strip(),
-            }
-        )
-        plan_steps = plan_result.steps if isinstance(plan_result, GenericPlan) else plan_result.get("steps", [])
-        if not isinstance(plan_steps, list) or not plan_steps:
-            raise ValueError("generic planner returned empty steps")
-        trace_events.append(
-            create_trace_event(
-                session_id=session_id,
-                node="planner",
-                status="success",
-                title=f"Planner generated {len(plan_steps)} generic steps",
-                result_summary=" | ".join(str(step) for step in plan_steps[:3]),
-                metadata={
-                    "matched_skills": [skill.get("name") for skill in matched_skills],
-                    "similar_incidents": similar_incidents,
-                },
-            )
-        )
-    except Exception as exc:
-        logger.warning(f"Generic planner failed, fallback to template plan: {exc}")
-        plan_steps = _build_generic_fallback_plan(input_text, tool_names)
-        plan_source = "generic_template_fallback"
-        trace_events.append(
-            create_trace_event(
-                session_id=session_id,
-                node="planner",
-                status="warning",
-                title="Generic planner fallback plan generated",
-                result_summary=" | ".join(plan_steps[:3]),
-                metadata={"reason": str(exc)},
-            )
-        )
-
-    return {
-        "plan": plan_steps,
-        "plan_source": plan_source,
-        "selected_profile": selected_profile,
-        "similar_incidents": similar_incidents,
-        "active_alerts": active_alerts,
-        "target_alert": target_alert,
-        "trace_events": trace_events,
-    }
+    return _build_controlled_profile_gap_result(
+        session_id=session_id,
+        input_text=input_text,
+        diagnosis_intent=diagnosis_intent or "knowledge_only",
+        matched_skills=matched_skills,
+        selected_profile=selected_profile,
+        similar_incidents=similar_incidents,
+    )

@@ -15,6 +15,7 @@ MEMORY_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "memor
 CPU_ENGINE_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "cpu_engine.py"
 RUNTIME_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "runtime.py"
 PATROL_DISPATCH_PATH = ROOT / "app" / "agent" / "aiops" / "investigation" / "patrol_dispatch.py"
+UTILS_PATH = ROOT / "app" / "agent" / "aiops" / "utils.py"
 
 
 def _load_module(module_name: str, path: Path):
@@ -34,6 +35,21 @@ sys.modules.setdefault("app.agent.aiops", types.ModuleType("app.agent.aiops"))
 sys.modules["app.agent.aiops"].__path__ = []  # type: ignore[attr-defined]
 sys.modules.setdefault("app.agent.aiops.investigation", types.ModuleType("app.agent.aiops.investigation"))
 sys.modules["app.agent.aiops.investigation"].__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("langchain_core", types.ModuleType("langchain_core"))
+sys.modules["langchain_core"].__path__ = []  # type: ignore[attr-defined]
+documents_module = types.ModuleType("langchain_core.documents")
+
+
+class _Document:
+    def __init__(self, page_content: str, metadata: dict | None = None):
+        self.page_content = page_content
+        self.metadata = metadata or {}
+
+
+documents_module.Document = _Document  # type: ignore[attr-defined]
+sys.modules["langchain_core.documents"] = documents_module
+
+utils = _load_module("app.agent.aiops.utils", UTILS_PATH)
 
 
 models = _load_module("app.agent.aiops.investigation.models", MODELS_PATH)

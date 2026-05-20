@@ -26,6 +26,7 @@ from app.agent.aiops.tool_registry import get_aiops_local_tools
 from app.agent.aiops.trace import create_trace_event, summarize_result
 from app.agent.aiops.utils import format_tools_description, invoke_tool
 from app.agent.mcp_client import get_mcp_client_with_retry
+from app.config import config
 from app.core.llm_factory import llm_factory
 from app.tools import retrieve_knowledge
 

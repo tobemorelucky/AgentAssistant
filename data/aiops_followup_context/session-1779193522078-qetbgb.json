@@ -1,0 +1,18 @@
+{
+  "session_id": "session-1779193522078-qetbgb",
+  "updated_at": "2026-05-19T12:26:14.955085+00:00",
+  "context": {
+    "previous_user_query": "按你说的修改了还是没用",
+    "previous_profile_id": "cpu_pressure_profile",
+    "previous_target_object": "unknown-target",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps 追问补充诊断报告\n## 关联上一轮诊断\n- 上一轮问题：CPU满了怎么办\n- 上一轮 Profile：`cpu_pressure_profile`\n- 上一轮对象：`demo-server-01`\n- 上一轮诊断摘要：# AIOps CPU 专项诊断报告",
+    "previous_key_evidence": [
+      "external_reference: 〖联网资料 1〗\n标题: Linux系统CPU使用率和负载高排查方法-轻量应用服务器(SAS)-阿里云帮助中心\n链接: https://help.aliyun."
+    ],
+    "previous_recommendations": "",
+    "previous_runbook_summary": "",
+    "previous_external_search_used": true,
+    "previous_action_safety_notes": ""
+  }
+}

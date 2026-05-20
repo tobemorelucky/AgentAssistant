@@ -44,7 +44,7 @@ followup_report = _load_module("app.agent.aiops.followup_report", FOLLOWUP_REPOR
 
 
 def test_normalize_external_reference_result_accepts_string():
-    payload = utils.normalize_external_reference_result("外部资料：建议检查 uvicorn worker 数量与 CPU 竞争。")
+    payload = utils.normalize_external_reference_result("外部资料建议先检查 uvicorn worker 数量与 CPU 争用。")
     assert payload["ok"] is True
     assert "uvicorn" in payload["content"]
     assert payload["source"] == "external_reference"
@@ -81,31 +81,36 @@ def test_normalize_external_reference_result_accepts_plain_list():
     assert "Docker cache cleanup" in payload["content"]
 
 
-def test_followup_external_report_uses_previous_context_not_empty_cpu_report():
+def test_followup_external_report_uses_compact_summary_and_external_reason():
     report = followup_report.build_followup_enrichment_report(
         {
             "input": "按你说的修改了还是没用",
             "followup_resolution": {
                 "resolution": "use_tavily_external_search",
-                "reason": "上一轮本地建议未解决问题，补充外部资料进一步排查。",
+                "reason": "旧的兜底原因文本",
             },
             "previous_aiops_context": {
                 "previous_user_query": "CPU满了怎么办",
                 "previous_profile_id": "cpu_pressure_profile",
                 "previous_target_object": "demo-server-01",
-                "previous_diagnosis_summary": "CPU 使用率持续偏高，热点进程集中在 uvicorn worker。",
+                "previous_diagnosis_summary": "报告原文开头不应该被原样拷贝。",
+                "previous_key_evidence": [
+                    "cpu_summary: usage=88.7%",
+                    "top_cpu_processes: top=python-worker",
+                    "top_cpu_processes: top=java-gateway",
+                ],
                 "previous_recommendations": "先观察热点进程，再检查 worker 数量与限流策略。",
-                "previous_runbook_summary": "本地 Runbook 建议先核对热点进程与配置。",
+                "previous_runbook_summary": "本地 Runbook 已给出基础 CPU 排查建议。",
                 "previous_action_safety_notes": "本轮未执行任何重启或 kill -9 操作。",
             },
             "evidence_store": {
                 "external_reference": {
                     "payload": {
                         "ok": True,
-                        "content": "外部资料建议先检查 uvicorn worker 配置与 CPU 争用。",
+                        "content": "外部资料建议区分 CPU 百分比高与 load high，并检查 io wait 与线程级热点。",
                         "artifacts": [
                             {
-                                "page_content": "Check uvicorn worker count before restarting services.",
+                                "page_content": "Check uvicorn worker count before restarting services. Review load average and io wait. Inspect hot threads if process-level hotspots are insufficient.",
                                 "metadata": {
                                     "title": "Uvicorn CPU troubleshooting",
                                     "source": "https://example.com/uvicorn-cpu",
@@ -119,8 +124,10 @@ def test_followup_external_report_uses_previous_context_not_empty_cpu_report():
     )
     assert "AIOps 追问补充诊断报告" in report
     assert "demo-server-01" in report
-    assert "CPU 使用率持续偏高" in report
-    assert "外部补充参考" in report
+    assert "上一轮判断 `demo-server-01` 存在CPU 压力" in report
+    assert "上一轮已基于本地 Runbook 给出处理建议，但用户反馈仍未解决，因此补充外部公开资料寻找新的排查思路。" in report
+    assert "外部补充参考：区分“CPU 百分比高”和“load 高但伴随 I/O wait”" in report
+    assert "外部补充参考：若进程级热点不足以解释问题，可进一步下钻到线程级热点" in report
     assert "unknown-host" not in report
     assert "未成功获取实时 CPU 摘要" not in report
 
@@ -137,7 +144,8 @@ def test_followup_local_report_does_not_claim_realtime_failure():
                 "previous_user_query": "CPU满了怎么办",
                 "previous_profile_id": "cpu_pressure_profile",
                 "previous_target_object": "demo-server-01",
-                "previous_diagnosis_summary": "CPU 压力集中在 uvicorn worker。",
+                "previous_diagnosis_summary": "CPU 压力集中在 python-worker。",
+                "previous_key_evidence": ["cpu_summary: usage=88.7%"],
                 "previous_recommendations": "先观察热点进程。",
             },
             "evidence_store": {
@@ -151,5 +159,5 @@ def test_followup_local_report_does_not_claim_realtime_failure():
         }
     )
     assert "AIOps 追问补充诊断报告" in report
-    assert "补充建议：检查 worker 数量" in report
+    assert "补充建议：检查 worker 数量、线程池与限流配置。" in report
     assert "未成功获取实时 CPU 摘要" not in report

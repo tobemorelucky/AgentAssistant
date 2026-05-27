@@ -175,3 +175,48 @@
 - 不应出现的错误现象：
   - 错误复用上一轮 CPU 上下文
   - 把独立新问题当作 dependent follow-up
+## 10. Heartbeat healthy summary
+- 输入
+  - `POST /api/v1/aiops/heartbeat/run`
+- 期望命中路径
+  - 轻量心跳扫描
+  - 不触发深度诊断
+- 期望关键 Trace
+  - 无专项诊断 Trace
+- 期望报告要点
+  - 仅保存 heartbeat summary
+  - `overall_status=healthy`
+- 不应出现
+  - 自动 remediation execute
+  - Tavily
+
+## 11. Heartbeat abnormal deep diagnosis
+- 输入
+  - `POST /api/v1/aiops/heartbeat/run`
+- 期望命中路径
+  - heartbeat summary
+  - `host_health_patrol_profile`
+  - 自动升级到 CPU / Memory / Disk 专项
+- 期望关键 Trace
+  - 诊断链与对应专项 Profile 一致
+- 期望报告要点
+  - 有 diagnosis report summary
+  - 有 remediation candidates
+- 不应出现
+  - 自动 execute
+
+## 12. Remediation dry-run / execute guard
+- 输入
+  - `POST /api/v1/aiops/remediation/dry-run`
+  - `POST /api/v1/aiops/remediation/execute`
+- 期望命中路径
+  - dry-run 调 Host Agent
+  - execute 先过 action policy
+- 期望关键 Trace
+  - audit/event log 记录 dry-run / execute
+- 期望报告要点
+  - execute 需要 `approval_token`
+  - forbidden action 直接拒绝
+- 不应出现
+  - 未审批执行成功
+  - forbidden action 被放行

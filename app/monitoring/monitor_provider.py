@@ -113,6 +113,41 @@ def _request_remote_json(path: str, params: dict[str, Any] | None = None) -> tup
         return response.status_code, response.json()
 
 
+def _request_remote_json_with_method(
+    method: str,
+    path: str,
+    *,
+    params: dict[str, Any] | None = None,
+    json_body: dict[str, Any] | None = None,
+) -> tuple[int, Any]:
+    base_url = get_remote_host_base_url()
+    if not base_url:
+        raise ValueError("AIOPS_REMOTE_HOST_BASE_URL 未配置。")
+
+    headers = {"Accept": "application/json"}
+    token = get_remote_host_token()
+    if token:
+        headers["X-Host-Agent-Token"] = token
+
+    url = f"{base_url}{path}"
+    if httpx.Client is None:  # type: ignore[truthy-function]
+        raise RuntimeError("当前环境缺少 httpx，无法访问 Host Agent。")
+    with httpx.Client(
+        timeout=DEFAULT_REMOTE_TIMEOUT,
+        follow_redirects=True,
+        trust_env=True,
+    ) as client:
+        response = client.request(
+            method.upper(),
+            url,
+            params=params or {},
+            json=json_body,
+            headers=headers,
+        )
+        response.raise_for_status()
+        return response.status_code, response.json()
+
+
 def _remote_request_or_error(
     *,
     tool_name: str,
@@ -214,6 +249,112 @@ def _remote_request_or_error(
             status_code,
         )
 
+    payload["source"] = "remote_host"
+    return payload, status_code
+
+
+def _remote_mutation_or_error(
+    *,
+    tool_name: str,
+    path: str,
+    json_body: dict[str, Any] | None = None,
+    extra: dict[str, Any] | None = None,
+) -> tuple[dict[str, Any] | None, int | None]:
+    status_code: int | None = None
+    try:
+        status_code, payload = _request_remote_json_with_method(
+            "POST",
+            path,
+            json_body=json_body,
+        )
+    except ValueError as exc:
+        logger.error("remote_host %s config error: %s", tool_name, exc)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message=str(exc),
+                error_code="remote_host_config_error",
+                extra=extra,
+            ),
+            None,
+        )
+    except httpx.TimeoutException as exc:
+        logger.error("remote_host %s timeout: %r", tool_name, exc)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message="请求 Host Agent 超时。",
+                error_code="remote_host_timeout",
+                extra=extra,
+            ),
+            None,
+        )
+    except httpx.HTTPStatusError as exc:
+        logger.error("remote_host %s http error: %r", tool_name, exc)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message=f"Host Agent 返回非 200 状态码: {exc.response.status_code}",
+                error_code="remote_host_http_error",
+                status_code=exc.response.status_code,
+                extra=extra,
+            ),
+            getattr(exc.response, "status_code", None),
+        )
+    except httpx.HTTPError as exc:
+        logger.error("remote_host %s request failed: %r", tool_name, exc)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message=f"访问 Host Agent 失败: {exc}",
+                error_code="remote_host_request_error",
+                extra=extra,
+            ),
+            None,
+        )
+    except json.JSONDecodeError as exc:
+        logger.error("remote_host %s invalid json: %r", tool_name, exc)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message="Host Agent 返回了非法 JSON。",
+                error_code="remote_host_invalid_json",
+                status_code=status_code,
+                extra=extra,
+            ),
+            status_code,
+        )
+
+    if not isinstance(payload, dict):
+        logger.error("remote_host %s invalid payload type: %s", tool_name, type(payload).__name__)
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message="Host Agent 返回结果不是对象。",
+                error_code="remote_host_invalid_payload",
+                status_code=status_code,
+                extra=extra,
+            ),
+            status_code,
+        )
+    if payload.get("ok") is False:
+        return (
+            _error_result(
+                tool_name=tool_name,
+                source="remote_host",
+                message=str(payload.get("message") or f"{tool_name} 执行失败"),
+                error_code=str(payload.get("error_code") or f"{tool_name}_error"),
+                status_code=status_code,
+                extra=extra,
+            ),
+            status_code,
+        )
     payload["source"] = "remote_host"
     return payload, status_code
 
@@ -816,3 +957,115 @@ def list_top_cpu_processes_data(limit: int = 10) -> dict[str, Any]:
         "limit": int(payload.get("limit") or limit),
         "source": "remote_host",
     }
+
+
+def list_remediation_actions() -> dict[str, Any]:
+    provider = get_monitor_provider_name()
+    _log_provider_context(provider, "list_remediation_actions")
+    if provider == "mock":
+        return {
+            "ok": True,
+            "actions": [],
+            "source": "mock",
+            "message": "Mock provider does not expose remote remediation actions.",
+        }
+
+    payload, status_code = _remote_request_or_error(
+        tool_name="list_remediation_actions",
+        path="/api/v1/remediation/actions",
+    )
+    if payload is None or payload.get("ok") is False:
+        return payload or _error_result(
+            tool_name="list_remediation_actions",
+            source="remote_host",
+            message="unknown",
+            error_code="unknown",
+            status_code=status_code,
+        )
+    return {
+        "ok": True,
+        "actions": payload.get("actions") or [],
+        "source": "remote_host",
+        "message": payload.get("message") or "",
+    }
+
+
+def dry_run_remediation_action(action_id: str, params: dict[str, Any] | None = None) -> dict[str, Any]:
+    provider = get_monitor_provider_name()
+    _log_provider_context(provider, "dry_run_remediation_action")
+    body = {"action_id": action_id, "params": params or {}}
+    if provider == "mock":
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "dry_run_id": f"mock-dry-run-{action_id}",
+            "estimated_reclaim_gb": 1.5 if "cleanup" in action_id or "prune" in action_id else 0.0,
+            "affected_files": 12 if "cleanup" in action_id else 0,
+            "sample_paths": ["/tmp/mock-file-1", "/tmp/mock-file-2"] if "cleanup" in action_id else [],
+            "message": "Mock dry-run completed.",
+            "source": "mock",
+        }
+
+    payload, status_code = _remote_mutation_or_error(
+        tool_name="dry_run_remediation_action",
+        path="/api/v1/remediation/dry-run",
+        json_body=body,
+        extra={"action_id": action_id},
+    )
+    if payload is None or payload.get("ok") is False:
+        return payload or _error_result(
+            tool_name="dry_run_remediation_action",
+            source="remote_host",
+            message="unknown",
+            error_code="unknown",
+            status_code=status_code,
+            extra={"action_id": action_id},
+        )
+    payload["action_id"] = action_id
+    return payload
+
+
+def execute_remediation_action(
+    dry_run_id: str,
+    action_id: str,
+    approval_token: str,
+    operator: str,
+    reason: str,
+) -> dict[str, Any]:
+    provider = get_monitor_provider_name()
+    _log_provider_context(provider, "execute_remediation_action")
+    body = {
+        "dry_run_id": dry_run_id,
+        "action_id": action_id,
+        "approval_token": approval_token,
+        "operator": operator,
+        "reason": reason,
+    }
+    if provider == "mock":
+        return {
+            "ok": True,
+            "action_id": action_id,
+            "dry_run_id": dry_run_id,
+            "operator": operator,
+            "message": "Mock execute completed.",
+            "source": "mock",
+        }
+
+    payload, status_code = _remote_mutation_or_error(
+        tool_name="execute_remediation_action",
+        path="/api/v1/remediation/execute",
+        json_body=body,
+        extra={"action_id": action_id, "dry_run_id": dry_run_id},
+    )
+    if payload is None or payload.get("ok") is False:
+        return payload or _error_result(
+            tool_name="execute_remediation_action",
+            source="remote_host",
+            message="unknown",
+            error_code="unknown",
+            status_code=status_code,
+            extra={"action_id": action_id, "dry_run_id": dry_run_id},
+        )
+    payload["action_id"] = action_id
+    payload["dry_run_id"] = dry_run_id
+    return payload

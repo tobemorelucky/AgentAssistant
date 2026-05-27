@@ -14,6 +14,8 @@ RUNTIME_DIR = DATA_DIR / "runtime_sessions"
 PENDING_DIR = DATA_DIR / "pending_actions"
 INCIDENT_DIR = DATA_DIR / "incident_memory"
 FOLLOWUP_CONTEXT_DIR = DATA_DIR / "aiops_followup_context"
+HEARTBEAT_DIR = DATA_DIR / "heartbeat"
+AUDIT_DIR = DATA_DIR / "aiops_audit"
 
 
 def _now_iso() -> str:
@@ -30,6 +32,18 @@ def _pending_path(session_id: str) -> Path:
 
 def _followup_context_path(session_id: str) -> Path:
     return FOLLOWUP_CONTEXT_DIR / f"{session_id}.json"
+
+
+def _heartbeat_history_path() -> Path:
+    return HEARTBEAT_DIR / "history.json"
+
+
+def _heartbeat_latest_path() -> Path:
+    return HEARTBEAT_DIR / "latest.json"
+
+
+def _audit_log_path() -> Path:
+    return AUDIT_DIR / "events.jsonl"
 
 
 def _read_json(path: Path, default: Any) -> Any:
@@ -90,7 +104,14 @@ class RuntimeStore:
     """Manage session snapshots and pending approval actions."""
 
     def __init__(self) -> None:
-        for directory in (RUNTIME_DIR, PENDING_DIR, INCIDENT_DIR, FOLLOWUP_CONTEXT_DIR):
+        for directory in (
+            RUNTIME_DIR,
+            PENDING_DIR,
+            INCIDENT_DIR,
+            FOLLOWUP_CONTEXT_DIR,
+            HEARTBEAT_DIR,
+            AUDIT_DIR,
+        ):
             directory.mkdir(parents=True, exist_ok=True)
 
     def load_session(self, session_id: str) -> dict[str, Any] | None:
@@ -166,6 +187,42 @@ class RuntimeStore:
         path = _pending_path(session_id)
         if path.exists():
             path.unlink()
+
+    def save_heartbeat_record(self, record: dict[str, Any], max_items: int = 50) -> None:
+        latest_payload = {
+            "updated_at": _now_iso(),
+            "record": record,
+        }
+        _write_json(_heartbeat_latest_path(), latest_payload)
+        history = _read_json(_heartbeat_history_path(), {"items": []})
+        items = list(history.get("items") or [])
+        items.append(record)
+        history_payload = {
+            "updated_at": _now_iso(),
+            "items": items[-max_items:],
+        }
+        _write_json(_heartbeat_history_path(), history_payload)
+
+    def load_latest_heartbeat(self) -> dict[str, Any]:
+        payload = _read_json(_heartbeat_latest_path(), {})
+        if isinstance(payload, dict) and isinstance(payload.get("record"), dict):
+            return payload["record"]
+        return {}
+
+    def load_heartbeat_history(self, limit: int = 20) -> list[dict[str, Any]]:
+        payload = _read_json(_heartbeat_history_path(), {"items": []})
+        items = list(payload.get("items") or [])
+        return [item for item in items[-max(1, limit):] if isinstance(item, dict)]
+
+    def append_audit_event(self, event_type: str, payload: dict[str, Any]) -> None:
+        _audit_log_path().parent.mkdir(parents=True, exist_ok=True)
+        entry = {
+            "timestamp": _now_iso(),
+            "event_type": event_type,
+            "payload": payload,
+        }
+        with _audit_log_path().open("a", encoding="utf-8") as file:
+            file.write(json.dumps(entry, ensure_ascii=False) + "\n")
 
 
 runtime_store = RuntimeStore()

@@ -69,6 +69,11 @@ class Settings(BaseSettings):
     aiops_alert_provider: str = "mock"
     aiops_remote_host_base_url: str = ""
     aiops_remote_host_token: str = ""
+    aiops_heartbeat_enabled: bool = False
+    aiops_heartbeat_interval_minutes: int = 60
+    aiops_heartbeat_trigger_deep_diagnosis: bool = True
+    aiops_heartbeat_store_report: bool = True
+    aiops_heartbeat_max_concurrent_runs: int = 1
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 

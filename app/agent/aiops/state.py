@@ -37,6 +37,7 @@ class PlanExecuteState(TypedDict, total=False):
     selected_escalation_profile: dict[str, Any] | None
     escalation_reason: str
     host_health_evidence: dict[str, Any]
+    remediation_candidates: List[dict[str, Any]]
     remediation_feedback_failed: bool
     previous_aiops_context: dict[str, Any] | None
     followup_relation: dict[str, Any] | None

@@ -21,6 +21,8 @@ from app.agent.aiops import followup_context
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
 from app.agent.aiops.incident_memory import build_incident_record
 from app.agent.aiops.patrol import summarize_structured_tool_result
+from app.agent.aiops.remediation.candidate_builder import build_remediation_candidates
+from app.agent.aiops.remediation.candidate_builder import render_remediation_candidates
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.trace import append_trace_event, create_trace_event
 
@@ -414,6 +416,7 @@ class AIOpsService:
             "selected_escalation_profile": None,
             "escalation_reason": "",
             "host_health_evidence": {},
+            "remediation_candidates": [],
             "remediation_feedback_failed": remediation_feedback_failed,
             "previous_aiops_context": previous_aiops_context,
             "followup_relation": followup_relation,
@@ -587,6 +590,15 @@ class AIOpsService:
                 return
 
             runtime_store.clear_pending_actions(session_id)
+            current_state["remediation_candidates"] = build_remediation_candidates(current_state)
+            if current_state.get("response") and current_state.get("remediation_candidates"):
+                candidate_lines = render_remediation_candidates(current_state["remediation_candidates"])
+                if "## Remediation Candidates" not in current_state["response"]:
+                    current_state["response"] = (
+                        f"{current_state['response'].rstrip()}\n\n"
+                        "## Remediation Candidates\n"
+                        f"{chr(10).join(candidate_lines)}"
+                    )
             current_state["incident_record"] = build_incident_record(current_state)
             current_state["previous_aiops_context"] = followup_context.build_previous_aiops_context(current_state)
             runtime_store.save_previous_aiops_context(session_id, current_state["previous_aiops_context"])
@@ -644,6 +656,31 @@ class AIOpsService:
                 }
             else:
                 yield event
+
+    async def run_diagnosis_once(
+        self,
+        *,
+        session_id: str,
+        task: str,
+        mode: str = "default",
+    ) -> dict[str, Any]:
+        """Run one diagnosis to completion and return the final persisted state."""
+        last_complete: dict[str, Any] | None = None
+        last_error: dict[str, Any] | None = None
+        async for event in self.diagnose(session_id=session_id, task=task, mode=mode):
+            if event.get("type") == "complete":
+                last_complete = event
+            elif event.get("type") == "error":
+                last_error = event
+        snapshot = runtime_store.load_session(session_id) or {}
+        result_state = snapshot.get("state") if isinstance(snapshot.get("state"), dict) else {}
+        return {
+            "completed": bool(last_complete),
+            "error": last_error,
+            "event": last_complete or last_error or {},
+            "state": result_state or {},
+            "status": snapshot.get("status") or ("completed" if last_complete else "error"),
+        }
 
 
 aiops_service = AIOpsService()

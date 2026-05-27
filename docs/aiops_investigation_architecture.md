@@ -263,3 +263,38 @@ Phase 5 之后，正式主路径已经不再依赖：
 2. 为 follow-up enrichment 增加更精炼的摘要模板
 3. 固化更多 remote_host 端到端测试夹具
 4. 若审批链要上线，再把危险动作接入正式 Human-in-the-loop 节点
+## Phase 6：Heartbeat Patrol 与 Remediation Candidates
+
+### Heartbeat Patrol
+- 新增独立的 heartbeat 管理模块，用于定时执行轻量主机健康扫描。
+- 轻量扫描只采集：
+  - `get_cpu_summary`
+  - `get_memory_summary`
+  - `get_disk_usage`
+  - `get_patrol_alerts`
+- 若 CPU / 内存 / 磁盘均 healthy 且无 active alerts：
+  - 只保存 heartbeat summary
+  - 不调用 LLM
+  - 不触发 Tavily
+  - 不生成执行动作
+- 若存在 warning / critical 或 active alert：
+  - 自动复用现有 `host_health_patrol_profile`
+  - 再按既有升级逻辑进入 CPU / Memory / Disk 专项诊断
+  - 产出 diagnosis report summary 与 remediation candidates
+  - 仍不自动 execute
+
+### Remediation Candidates
+- CPU / Memory / Disk 诊断会在最终报告中追加 `Remediation Candidates`
+- 候选动作分为四类：
+  1. 可直接给出的低风险建议
+  2. 可 dry-run 的动作
+  3. 需人工确认或审批的动作
+  4. 禁止自动执行的动作
+- 第一版仅调用 Host Agent 的 remediation dry-run，不自动执行 execute
+
+### Dry-run / Execute 边界
+- `dry_run_remediation_action` 调用 Linux Host Agent 的 `/api/v1/remediation/dry-run`
+- `execute_remediation_action` 调用 `/api/v1/remediation/execute`
+- execute 必须带 `approval_token`
+- forbidden action 永远在主项目先拒绝
+- 所有 dry-run / execute 结果都会写入主项目 audit log

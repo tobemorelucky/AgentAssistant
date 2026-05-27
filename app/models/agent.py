@@ -69,3 +69,29 @@ class SessionFeedbackRequest(BaseModel):
     helpful: bool = Field(False, description="Whether the diagnosis was helpful")
     operator: str = Field("anonymous", description="Operator name")
     comment: str = Field("", description="Optional feedback comment")
+
+
+class HeartbeatRunRequest(BaseModel):
+    """Manual heartbeat trigger request."""
+
+    trigger: str = Field("manual", description="Trigger source")
+    session_id: str = Field("heartbeat-manual", description="Session ID prefix for deep diagnosis")
+
+
+class RemediationDryRunRequest(BaseModel):
+    """Dry-run remediation request."""
+
+    action_id: str = Field(..., description="Remediation action ID")
+    params: Dict[str, Any] = Field(default_factory=dict, description="Action parameters")
+    session_id: str = Field("manual-remediation", description="Related diagnosis session")
+
+
+class RemediationExecuteRequest(BaseModel):
+    """Execute remediation request."""
+
+    dry_run_id: str = Field(..., description="Dry-run ID returned by Host Agent")
+    action_id: str = Field(..., description="Remediation action ID")
+    approval_token: str = Field("", description="Explicit approval token")
+    operator: str = Field("anonymous", description="Operator name")
+    reason: str = Field("", description="Execution reason")
+    session_id: str = Field("manual-remediation", description="Related diagnosis session")

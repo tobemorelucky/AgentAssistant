@@ -2,171 +2,146 @@
 
 AgentAssistant 是一个同时支持普通 RAG 知识问答与 AIOps 实时诊断的 Python 项目。
 
-当前正式架构已经完成以下能力：
-- 普通 RAG 与 AIOps 模式边界隔离
-- CPU / Memory / Disk 专项诊断统一迁移到 Evidence-Driven Investigation Runtime
-- 默认巡检升级为主机基础健康巡检
-- 巡检发现异常后可自动升级到对应专项 Profile
-- AIOps 多轮追问已接通
-- 在本地知识不足或用户反馈建议无效时，可受控触发 Tavily / `web_search`
-- 高风险动作仅做分级提示，不自动执行
-
-## 两种模式
+## 模式边界
 
 ### 普通 RAG
-- 仅用于知识问答、Runbook 查阅、历史案例参考
-- 不直接读取实时主机状态
-- 如果用户询问“当前 CPU/内存/磁盘/系统状态”，系统会提示切换到 AIOps 模式
-- 若引用知识库中的案例或 mock/demo 数据，必须标记为历史示例，不代表当前实时现场
+- 只做知识问答、Runbook 检索、历史案例参考。
+- 不读取实时主机状态。
+- 如果用户询问当前 CPU / 内存 / 磁盘 / 系统是否异常，会提示切换到 AIOps 模式。
 
 ### AIOps
-- 面向实时诊断
-- 基于 MCP / Host Agent / 本地工具收集现场证据
-- 通过 Runtime Registry 进入对应专项 Profile
-- 所有结论优先基于本地实时证据，其次才是本地 Runbook / 外部补充参考
+- 面向实时诊断。
+- 基于 Host Agent / MCP / 本地工具收集现场证据。
+- 结论优先依赖本地实时证据，其次才是本地 Runbook / 外部补充参考。
 
 ## 当前正式 AIOps 架构
 
 ### 默认巡检
-默认巡检现在的正式入口是：
-- `host_health_patrol_profile`
+- 正式入口：`host_health_patrol_profile`
+- 默认采集：
+  - `get_cpu_summary`
+  - `get_memory_summary`
+  - `get_disk_usage`
+  - `get_patrol_alerts`
+- 若主机健康且无告警，则输出主机健康巡检报告。
+- 若发现异常，则自动升级到对应专项 Profile。
 
-它会至少采集：
-- `get_cpu_summary`
-- `get_memory_summary`
-- `get_disk_usage`
-- `get_patrol_alerts`
-
-若 CPU / 内存 / 磁盘均健康，报告会明确说明：
-- 当前主机未发现明显资源级异常
-- 当前无需执行处置动作
-- 若告警源为空，则写明未发现活跃告警
-
-若发现异常，则会自动升级进入专项诊断，而不是只停留在“建议进入专项诊断”。
-
-### 专项诊断 Profile
-当前正式支持的 execution profile：
+### 专项诊断
 - `cpu_pressure_profile`
 - `memory_pressure_profile`
 - `disk_pressure_profile`
 
-它们统一走：
-- `InvestigationTask`
-- `Evidence Store`
-- `StopController`
-- `Runtime Registry`
-- `Verifier`
+三类专项诊断统一采用：
+- Investigation Runtime
+- Evidence Store
+- StopController
+- Runtime Registry
+- Follow-up Context
 
-### 巡检自动升级
-默认巡检发现异常后，会按以下优先级选择升级目标：
-1. 优先选择活跃告警中的最高严重级别异常
-2. 若无活跃告警，则根据 CPU / 内存 / 磁盘的资源异常进行选择
+### 自动升级
+默认巡检发现异常后，按优先级自动升级：
+1. 最高严重级别 active alert
+2. 若无 active alert，则按资源异常级别选择
 
-当前支持的映射：
+当前支持映射：
 - `HighCPUUsage` / `HostHighCPUUsage` -> `cpu_pressure_profile`
 - `HighMemoryUsage` / `HostHighMemoryUsage` / `MemoryPressure` -> `memory_pressure_profile`
 - `HighDiskUsage` / `HostHighDiskUsage` / `DiskFull` -> `disk_pressure_profile`
 
-## Evidence-Driven Investigation
-
-专项诊断遵循统一优先级：
-
-### 第一层：本地实时证据
-- CPU：
-  - `get_cpu_summary`
-  - `list_top_cpu_processes`
-- Memory：
-  - `get_memory_summary`
-  - `list_top_memory_processes`
-- Disk：
-  - `get_disk_usage`
-  - `list_large_directories`
-  - `list_large_files`
-  - `query_docker_disk_usage`
-  - `query_deleted_open_files`
-
-### 第二层：本地上下文证据
-仅在存在合适上下文时才补查，例如：
-- `search_historical_tickets`
-- `search_log`
-- `get_service_info`
-
-没有 `service_name` 或目标对象时，不会强行去查服务日志或历史工单。
-
-### 第三层：本地 RAG / Runbook
-- CPU：`retrieve_knowledge("CPU 使用率过高 排查 runbook")`
-- Memory：`retrieve_knowledge("内存使用率过高 排查 runbook")`
-- Disk：`retrieve_knowledge("磁盘使用率过高 清理 runbook")`
-
-本地知识库内容只作为参考，不会伪装成实时事实。
-
 ## Follow-up Context
 
-AIOps 多轮追问已经接通。
+AIOps 多轮追问已接通。
 
-系统会先判定当前问题与上一轮 AIOps 诊断的关系：
+系统会先判断当前问题与上一轮诊断的关系：
 - `independent`
 - `dependent_followup`
 - `ambiguous`
 
-### dependent_followup
-例如：
-- 为什么你建议先观察热点进程？
-- 为什么建议先看 Docker build cache？
-- 按你说的做了还是没效果
-- 继续查别的方法
+依赖型追问会恢复上一轮压缩上下文：
+- 上一轮问题
+- 上一轮 Profile
+- 上一轮对象
+- 上一轮诊断摘要
+- 关键证据
+- 建议摘要
+- Runbook 摘要
+- 是否已用外部搜索
 
-这类请求会恢复上一轮的 `previous_aiops_context`，并优先走 follow-up 处理，而不是当作一个全新的诊断请求。
+## Tavily / web_search
 
-### independent
-例如：
-- CPU 状况怎么样？
-- 内存情况如何？
-- 请检查服务器磁盘使用情况
+`web_search` 不是默认每次都调用。
 
-这类问题不会错误复用上一轮诊断上下文。
+只在以下场景受控触发：
+1. 本地 Runbook / RAG 不足
+2. 用户明确反馈上一轮建议无效
 
-## Tavily / web_search 触发规则
+外部结果会明确标记为：
+- 外部补充参考
+- 不属于本地实时证据
 
-`web_search` 不是默认每次都会调用。
+## Action Safety
 
-它只会在以下场景受控触发：
+高风险动作不自动执行。
 
-### 场景 1：本地知识不足
-例如：
-- `retrieve_knowledge` 未返回有效内容
-- Runbook 无法支撑新的处理建议
-- follow-up resolver 判定需要外部补充参考
-
-### 场景 2：用户反馈上一轮建议无效
-例如：
-- 按你说的做了还是没效果
-- 重新执行后还是不行
-- 这个方案没用
-- 继续查别的思路
-
-此时系统会：
-1. 先恢复上一轮 AIOps 上下文
-2. 再由 follow-up resolver 判断是否需要外部搜索
-3. 如触发外搜，结果会明确标记为“外部补充参考”
-
-外部资料：
-- 不等同于本地实时证据
-- 不会改写为已确认的现场事实
-- 搜索失败也不会阻塞主流程收口
-
-## 动作安全边界
-
-当前系统不会自动执行高风险动作。
-
-报告会输出三类建议：
+报告会输出动作分级：
 - 可直接给出的低风险建议
+- 可 dry-run 的动作
 - 需人工确认或审批的动作
-- 禁止自动执行或高风险动作
+- 禁止自动执行的动作
 
-并明确说明：
-- 本轮未执行任何重启、扩容、限流、清理或其他高风险操作
-- 若后续接入危险工具，必须经过审批节点
+## Heartbeat Patrol
+
+### 配置
+- `AIOPS_HEARTBEAT_ENABLED=false`
+- `AIOPS_HEARTBEAT_INTERVAL_MINUTES=60`
+- `AIOPS_HEARTBEAT_TRIGGER_DEEP_DIAGNOSIS=true`
+- `AIOPS_HEARTBEAT_STORE_REPORT=true`
+- `AIOPS_HEARTBEAT_MAX_CONCURRENT_RUNS=1`
+
+### 行为
+- 启用后，主项目会启动定时心跳巡检。
+- 心跳巡检先做轻量主机扫描：
+  - `get_cpu_summary`
+  - `get_memory_summary`
+  - `get_disk_usage`
+  - `get_patrol_alerts`
+- 若 CPU / 内存 / 磁盘都 healthy 且无活跃告警：
+  - 只保存 heartbeat summary
+  - 不调用 LLM
+  - 不触发 Tavily
+  - 不执行 remediation
+- 若存在 warning / critical 或 active alert：
+  - 复用现有 `host_health_patrol_profile`
+  - 自动升级到对应 CPU / Memory / Disk 专项诊断
+  - 保存 diagnosis report 与 remediation candidates
+  - 不自动 execute
+
+### Heartbeat API
+- `POST /api/v1/aiops/heartbeat/run`
+- `GET /api/v1/aiops/heartbeat/latest`
+- `GET /api/v1/aiops/heartbeat/history`
+
+## Remediation Candidates
+
+### 目标
+根据 CPU / Memory / Disk 诊断结果生成候选动作，但第一版不自动执行。
+
+### 报告展示
+报告中的 `Remediation Candidates` 会分组展示：
+1. 可直接给出的低风险建议
+2. 可 dry-run 的动作
+3. 需人工确认或审批的动作
+4. 禁止自动执行的动作
+
+### Dry-run / Execute API
+- `POST /api/v1/aiops/remediation/dry-run`
+- `POST /api/v1/aiops/remediation/execute`
+
+### 约束
+- dry-run 只做影响评估
+- execute 必须带 `approval_token`
+- forbidden action 永远拒绝
+- reboot server、删除数据库目录、删除持久化卷等动作禁止自动执行
 
 ## 关键配置
 
@@ -181,20 +156,20 @@ AIOps 多轮追问已经接通。
 - `TEXT_EMBEDDING_MODEL`
 - `MULTIMODAL_EMBEDDING_MODEL`
 
-### AIOps Monitor / Alert Provider
+### Monitor / Alert Provider
 - `AIOPS_MONITOR_PROVIDER=mock|remote_host`
 - `AIOPS_REMOTE_HOST_BASE_URL=...`
 - `AIOPS_REMOTE_HOST_TOKEN=...`
 - `AIOPS_ALERT_PROVIDER=mock|remote_host|disabled`
 
-### 外部搜索
+### External Search
 - `WEB_SEARCH_ENABLED=true|false`
 - `TAVILY_API_KEY=...`
 - `WEB_SEARCH_MAX_RESULTS=...`
 - `WEB_SEARCH_DEPTH=...`
 - `WEB_SEARCH_TIMEOUT=...`
 
-### AIOps 控制项
+### AIOps Control
 - `AIOPS_MAX_STEPS=8`
 - `AIOPS_ALLOW_LEGACY_GENERIC_DIAGNOSIS=false`
 
@@ -203,7 +178,7 @@ AIOps 多轮追问已经接通。
 新增 AIOps MCP Tool 后，必须同步更新：
 - `tool_policy.yaml`
 
-否则即使 debug 直调成功，网页 Agent 里的 Executor 仍可能因默认 `blocked` 而无法调用。
+否则即使调试脚本可以直接调用，网页里的 AIOps Executor 仍可能因为默认 `blocked` 而失败。
 
 ## 相关文档
 

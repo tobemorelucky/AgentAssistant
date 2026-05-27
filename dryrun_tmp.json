@@ -1,0 +1,1 @@
+﻿{"session_id":"real-vm-remediation-001","action_id":"cleanup_tmp_old_files","params":{"mount":"/","path":"/tmp/aiops-disk-test"}}

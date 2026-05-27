@@ -1,0 +1,30 @@
+{
+  "session_id": "session-1779872410874-qhqfkb",
+  "updated_at": "2026-05-27T09:00:51.165261+00:00",
+  "context": {
+    "previous_user_query": "请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。",
+    "previous_profile_id": "disk_pressure_profile",
+    "previous_target_object": "he-VMware-Virtual-Platform",
+    "previous_target_alert": {
+      "alert_name": "HostHighDiskUsage",
+      "severity": "high",
+      "resource_type": "disk",
+      "host": "he-VMware-Virtual-Platform",
+      "service_name": "he-VMware-Virtual-Platform",
+      "description": "主机磁盘压力信号来自 Host Agent 实时摘要。",
+      "status": "active",
+      "source": "remote_host"
+    },
+    "previous_diagnosis_summary": "# AIOps 磁盘专项诊断报告\n## 巡检升级说明\n- 本轮基础巡检发现 `HostHighDiskUsage` / `high`，系统自动升级进入 Disk 专项诊断。\n- 升级原因：基础巡检发现最高优先级告警 `HostHighDiskUsage` / `high`，因此自动升级进入对应专项诊断。\n## 任务与对象\n- 请检查当前系统是否存在活跃告警。如果存在告警，请选择最高严重级别告警，结合监控指标、日志、历史工单和知识库 runbook 进行根因分析，并保留完整 Agent Trace。",
+    "previous_key_evidence": [
+      "disk_usage: usage=81.5%",
+      "large_directories: top_dir=/proc",
+      "large_files: top_file=/tmp/aiops-disk-test/fill.bin",
+      "disk_runbook: 【参考资料 1】\n标题: 磁盘使用率过高告警处理方案 > 告警名称\n来源: disk_high_usage.md\n内容:\n# 磁盘使用率过高告警处理方案  \n#"
+    ],
+    "previous_recommendations": "- 继续核对目录占用、大文件与 Docker build cache 的相对贡献，确认主要容量来源。\n- 若存在 deleted open files，可结合进程释放策略或平滑重启窗口进一步处理。\n- 如服务级上下文存在，可继续补充历史工单或服务信息辅助判断影响面。",
+    "previous_runbook_summary": "- 本地 Runbook 摘要：【参考资料 1】\n标题: 磁盘使用率过高告警处理方案 > 告警名称\n来源: disk_high_usage.md\n内容:",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": "- 本轮未执行任何重启、清理、扩容、限流或其他高风险操作。\n- `rm -rf`、`docker system prune --volumes`、删除数据库目录、删除业务 uploads、删除 Milvus/MinIO/etcd volumes 均属于高风险或禁止自动执行动作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+  }
+}

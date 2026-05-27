@@ -1,0 +1,21 @@
+{
+  "session_id": "real-vm-disk-001",
+  "updated_at": "2026-05-27T08:52:16.161249+00:00",
+  "context": {
+    "previous_user_query": "请检查服务器当前磁盘空间使用情况，并分析主要占用来源。",
+    "previous_profile_id": "disk_pressure_profile",
+    "previous_target_object": "he-VMware-Virtual-Platform",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "# AIOps 磁盘专项诊断报告\n## 任务与对象\n- 请检查服务器当前磁盘空间使用情况，并分析主要占用来源。\n## 已确认事实\n- 主机：`he-VMware-Virtual-Platform`\n- 挂载点：`/`",
+    "previous_key_evidence": [
+      "disk_usage: usage=78.9%",
+      "large_directories: top_dir=/proc",
+      "large_files: top_file=/tmp/aiops-disk-test/fill.bin",
+      "disk_runbook: 【参考资料 1】\n标题: 磁盘使用率过高告警处理方案 > 告警名称\n来源: disk_high_usage.md\n内容:\n# 磁盘使用率过高告警处理方案  \n#"
+    ],
+    "previous_recommendations": "- 继续核对目录占用、大文件与 Docker build cache 的相对贡献，确认主要容量来源。\n- 若存在 deleted open files，可结合进程释放策略或平滑重启窗口进一步处理。\n- 如服务级上下文存在，可继续补充历史工单或服务信息辅助判断影响面。",
+    "previous_runbook_summary": "- 本地 Runbook 摘要：【参考资料 1】\n标题: 磁盘使用率过高告警处理方案 > 告警名称\n来源: disk_high_usage.md\n内容:",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": "- 本轮未执行任何重启、清理、扩容、限流或其他高风险操作。\n- `rm -rf`、`docker system prune --volumes`、删除数据库目录、删除业务 uploads、删除 Milvus/MinIO/etcd volumes 均属于高风险或禁止自动执行动作。\n- 若后续接入危险操作工具，必须经过审批节点。"
+  }
+}

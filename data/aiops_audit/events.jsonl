@@ -1,0 +1,4 @@
+{"timestamp": "2026-05-27T08:54:46.235273+00:00", "event_type": "remediation_dry_run", "payload": {"session_id": "real-vm-remediation-001", "action_id": "cleanup_tmp_old_files", "ok": true}}
+{"timestamp": "2026-05-27T08:55:06.714321+00:00", "event_type": "remediation_dry_run", "payload": {"session_id": "real-vm-remediation-001", "action_id": "cleanup_tmp_old_files", "ok": true}}
+{"timestamp": "2026-05-27T08:55:18.452977+00:00", "event_type": "remediation_execute_requested", "payload": {"session_id": "real-vm-remediation-001", "action_id": "cleanup_tmp_old_files", "operator": "tester", "decision": "approval_required"}}
+{"timestamp": "2026-05-27T08:55:51.910589+00:00", "event_type": "remediation_execute_requested", "payload": {"session_id": "real-vm-remediation-002", "action_id": "reboot_server", "operator": "tester", "decision": "reject"}}

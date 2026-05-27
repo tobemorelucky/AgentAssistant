@@ -1,0 +1,20 @@
+{
+  "session_id": "real-vm-patrol-001",
+  "updated_at": "2026-05-27T08:48:27.077703+00:00",
+  "context": {
+    "previous_user_query": "请开始一次 AIOps 巡检，并保留完整 Agent Trace。",
+    "previous_profile_id": "host_health_patrol_profile",
+    "previous_target_object": "he-VMware-Virtual-Platform",
+    "previous_target_alert": {},
+    "previous_diagnosis_summary": "- 当前主机未发现明显资源级异常。\n- 当前无需执行处置动作。\n- 未发现 warning / critical 主机级告警。\n## CPU 状态\n- 状态：`healthy`\n- 使用率：`0.0%`",
+    "previous_key_evidence": [
+      "cpu_summary: usage=0.0%",
+      "memory_summary: usage=26.5%",
+      "disk_usage: usage=43.1%"
+    ],
+    "previous_recommendations": "- 建议持续观察主机资源趋势，必要时再次发起巡检。\n## 证据缺口\n- 当前关键巡检证据已覆盖主机健康巡检首轮范围。",
+    "previous_runbook_summary": "",
+    "previous_external_search_used": false,
+    "previous_action_safety_notes": "- 巡检仅覆盖主机 CPU、内存、磁盘和活跃告警摘要，未自动进入服务级日志或工单深查。\n- 本轮未执行任何重启、扩容、限流或其他高风险操作。\n## 后续建议\n- 建议持续观察主机资源趋势，必要时再次发起巡检。"
+  }
+}

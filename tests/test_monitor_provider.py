@@ -158,6 +158,72 @@ def test_remote_host_large_files_adapts_success(monkeypatch):
     assert result["permission_denied_count"] == 2
 
 
+def test_remote_host_large_directories_filters_pseudo_filesystems(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/disk/large-directories"
+        return 200, {
+            "ok": True,
+            "directories": [
+                {"path": "/proc", "size_gb": 131071.99},
+                {"path": "/sys", "size_gb": 0.48},
+                {"path": "/dev", "size_gb": 1.0},
+                {"path": "/run", "size_gb": 3.0},
+                {"path": "/tmp/.mount_AppImage", "size_gb": 5.0},
+                {"path": "/var", "size_gb": 4.12},
+                {"path": "/usr", "size_gb": 5.37},
+            ],
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_large_directories_data(path="/", limit=10)
+    paths = [item["path"] for item in result["directories"]]
+
+    assert "/proc" not in paths
+    assert "/sys" not in paths
+    assert "/dev" not in paths
+    assert "/run" not in paths
+    assert "/tmp/.mount_AppImage" not in paths
+    assert "/var" in paths
+    assert "/usr" in paths
+
+
+def test_remote_host_large_files_filters_pseudo_filesystems(monkeypatch):
+    monitor_provider.config.aiops_monitor_provider = "remote_host"
+    monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"
+    monitor_provider.config.aiops_remote_host_token = ""
+
+    def fake_request(path, params=None):
+        assert path == "/api/v1/disk/large-files"
+        return 200, {
+            "ok": True,
+            "files": [
+                {"path": "/proc/kcore", "size_mb": 1024},
+                {"path": "/sys/kernel/btf/vmlinux", "size_mb": 300},
+                {"path": "/dev/shm/big.tmp", "size_mb": 512},
+                {"path": "/run/log/journal.tmp", "size_mb": 256},
+                {"path": "/tmp/.mountFoo/cache.bin", "size_mb": 1200},
+                {"path": "/swap.img", "size_mb": 4096},
+            ],
+        }
+
+    monkeypatch.setattr(monitor_provider, "_request_remote_json", fake_request)
+
+    result = monitor_provider.list_large_files_data(path="/", min_size_mb=100, limit=20)
+    paths = [item["path"] for item in result["files"]]
+
+    assert "/proc/kcore" not in paths
+    assert "/sys/kernel/btf/vmlinux" not in paths
+    assert "/dev/shm/big.tmp" not in paths
+    assert "/run/log/journal.tmp" not in paths
+    assert "/tmp/.mountFoo/cache.bin" not in paths
+    assert "/swap.img" in paths
+
+
 def test_remote_host_deleted_open_files_adapts_success(monkeypatch):
     monitor_provider.config.aiops_monitor_provider = "remote_host"
     monitor_provider.config.aiops_remote_host_base_url = "http://192.168.6.129:9001"

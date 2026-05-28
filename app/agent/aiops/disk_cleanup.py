@@ -46,6 +46,37 @@ DISK_KEYWORDS = (
 )
 
 
+_PSEUDO_FS_PREFIXES = ("/proc", "/sys", "/dev", "/run", "/var/run")
+_PSEUDO_TMP_PREFIX = "/tmp/.mount"
+
+
+def _normalize_posix_path(path: Any) -> str:
+    text = str(path or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = f"/{text.lstrip('/')}"
+    return re.sub(r"/{2,}", "/", text.rstrip("/")) or "/"
+
+
+def is_pseudo_filesystem_path(path: Any) -> bool:
+    normalized = _normalize_posix_path(path)
+    if not normalized:
+        return False
+    for prefix in _PSEUDO_FS_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return normalized.startswith(_PSEUDO_TMP_PREFIX)
+
+
+def filter_disk_directory_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if not is_pseudo_filesystem_path(item.get("path"))]
+
+
+def filter_disk_file_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if not is_pseudo_filesystem_path(item.get("path"))]
+
+
 def _extract_embedded_json(text: str) -> Any:
     brace_start = text.find("{")
     brace_end = text.rfind("}")
@@ -281,6 +312,7 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
                     "source": item.get("source") or data.get("source") or "mock",
                 }
             )
+        normalized = filter_disk_directory_items(normalized)
         return {
             "ok": True,
             "path": data.get("path") or "/",
@@ -329,6 +361,7 @@ def normalize_disk_tool_result(tool_name: str, raw_result: Any) -> Any:
                     "source": item.get("source") or data.get("source") or "mock",
                 }
             )
+        normalized = filter_disk_file_items(normalized)
         return {
             "ok": True,
             "source": data.get("source") or "mock",
@@ -579,14 +612,14 @@ def build_disk_cleanup_report(input_text: str, past_steps: list[tuple[str, str]]
 
     disk_usage = evidence.get("get_disk_usage", {})
     directories_result = evidence.get("list_large_directories", {})
-    directories = list(directories_result.get("directories", []))
+    directories = filter_disk_directory_items(list(directories_result.get("directories", [])))
     files_result = evidence.get("list_large_files", {})
     deleted_result = evidence.get("query_deleted_open_files", {})
     docker_usage = evidence.get("query_docker_disk_usage", {})
     cleanup_candidates = {} if remote_realtime_mode else evidence.get("get_disk_cleanup_candidates", {})
     knowledge = evidence.get("retrieve_knowledge", "")
 
-    files = list(files_result.get("files", []))
+    files = filter_disk_file_items(list(files_result.get("files", [])))
     deleted_open_files = list(deleted_result.get("files", []))
 
     host = disk_usage.get("host") or "该字段未返回"
@@ -830,8 +863,8 @@ def build_disk_verifier_findings(report: str, past_steps: list[tuple[str, str]])
     files_result = evidence.get("list_large_files", {})
     deleted_result = evidence.get("query_deleted_open_files", {})
     directories_result = evidence.get("list_large_directories", {})
-    directories = list(directories_result.get("directories", []))
-    files = list(files_result.get("files", []))
+    directories = filter_disk_directory_items(list(directories_result.get("directories", [])))
+    files = filter_disk_file_items(list(files_result.get("files", [])))
     docker = evidence.get("query_docker_disk_usage", {})
     cleanup = {} if _is_remote_realtime_mode(evidence) else evidence.get("get_disk_cleanup_candidates", {})
     disk_usage = evidence.get("get_disk_usage", {})

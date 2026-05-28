@@ -5,7 +5,12 @@ from __future__ import annotations
 from textwrap import dedent
 from typing import Any
 
-from app.agent.aiops.disk_cleanup import normalize_disk_tool_result, summarize_disk_tool_result
+from app.agent.aiops.disk_cleanup import (
+    filter_disk_directory_items,
+    filter_disk_file_items,
+    normalize_disk_tool_result,
+    summarize_disk_tool_result,
+)
 from app.agent.aiops.utils import normalize_external_reference_result
 
 from .evidence import record_evidence_attempt
@@ -241,7 +246,7 @@ def _max_no_progress_rounds(profile_id: str | None) -> int:
 
 def _directories_indicate_docker(evidence_store: dict[str, dict[str, Any]]) -> bool:
     payload = _slot_payload(evidence_store, "large_directories")
-    directories = payload.get("directories") or []
+    directories = filter_disk_directory_items(payload.get("directories") or [])
     for item in directories:
         if not isinstance(item, dict):
             continue
@@ -257,8 +262,8 @@ def _disk_pressure_high(evidence_store: dict[str, dict[str, Any]]) -> bool:
 
 
 def _explanation_is_weak(evidence_store: dict[str, dict[str, Any]]) -> bool:
-    directory_count = len(_slot_payload(evidence_store, "large_directories").get("directories") or [])
-    file_count = len(_slot_payload(evidence_store, "large_files").get("files") or [])
+    directory_count = len(filter_disk_directory_items(_slot_payload(evidence_store, "large_directories").get("directories") or []))
+    file_count = len(filter_disk_file_items(_slot_payload(evidence_store, "large_files").get("files") or []))
     return directory_count < 2 or file_count < 2
 
 
@@ -466,7 +471,7 @@ def _number(value: Any, suffix: str = "") -> str:
 
 def _top_directory_lines(evidence_store: dict[str, dict[str, Any]]) -> list[str]:
     payload = _slot_payload(evidence_store, "large_directories")
-    directories = payload.get("directories") or []
+    directories = filter_disk_directory_items(payload.get("directories") or [])
     lines = [
         f"- `{item.get('path')}`：{_number(item.get('size_gb'), 'GB')}"
         for item in directories[:5]
@@ -483,7 +488,7 @@ def _top_directory_lines(evidence_store: dict[str, dict[str, Any]]) -> list[str]
 
 def _top_file_lines(evidence_store: dict[str, dict[str, Any]]) -> list[str]:
     payload = _slot_payload(evidence_store, "large_files")
-    files = payload.get("files") or []
+    files = filter_disk_file_items(payload.get("files") or [])
     lines = [
         f"- `{item.get('path')}`：{_number(item.get('size_gb'), 'GB')}"
         for item in files[:5]

@@ -35,6 +35,8 @@ logger = logging.getLogger("AIOpsMonitorProvider")
 ROOT_DIR = Path(__file__).resolve().parents[2]
 MONITOR_MOCK_PATH = ROOT_DIR / "mock_data" / "disk.json"
 DEFAULT_REMOTE_TIMEOUT = 10.0
+_PSEUDO_FS_PREFIXES = ("/proc", "/sys", "/dev", "/run", "/var/run")
+_PSEUDO_TMP_PREFIX = "/tmp/.mount"
 
 
 def get_monitor_provider_name() -> str:
@@ -65,6 +67,33 @@ def _log_provider_context(provider: str, tool_name: str) -> None:
 def _load_monitor_mock_data() -> dict[str, Any]:
     with MONITOR_MOCK_PATH.open("r", encoding="utf-8") as fh:
         return json.load(fh)
+
+
+def _normalize_posix_path(path: Any) -> str:
+    text = str(path or "").strip().replace("\\", "/")
+    if not text:
+        return ""
+    if not text.startswith("/"):
+        text = f"/{text.lstrip('/')}"
+    return re.sub(r"/{2,}", "/", text.rstrip("/")) or "/"
+
+
+def _is_pseudo_filesystem_path(path: Any) -> bool:
+    normalized = _normalize_posix_path(path)
+    if not normalized:
+        return False
+    for prefix in _PSEUDO_FS_PREFIXES:
+        if normalized == prefix or normalized.startswith(f"{prefix}/"):
+            return True
+    return normalized.startswith(_PSEUDO_TMP_PREFIX)
+
+
+def _filter_pseudo_directory_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if not _is_pseudo_filesystem_path(item.get("path"))]
+
+
+def _filter_pseudo_file_items(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [item for item in items if not _is_pseudo_filesystem_path(item.get("path"))]
 
 
 def _error_result(
@@ -574,6 +603,7 @@ def list_large_directories_data(path: str = "/", limit: int = 10) -> dict[str, A
             directory["reason"] = directory.get("reason") or _directory_reason(str(directory.get("path", "")))
             directory["source"] = "mock"
             directories.append(directory)
+        directories = _filter_pseudo_directory_items(directories)
         return {
             "path": path,
             "limit": limit,
@@ -617,6 +647,7 @@ def list_large_directories_data(path: str = "/", limit: int = 10) -> dict[str, A
                 "source": "remote_host",
             }
         )
+    directories = _filter_pseudo_directory_items(directories)
 
     return {
         "path": path or "/",
@@ -649,6 +680,7 @@ def list_large_files_data(path: str = "/", min_size_mb: int = 100, limit: int = 
                     "source": "mock",
                 }
             )
+        filtered = _filter_pseudo_file_items(filtered)
         return {
             "ok": True,
             "path": path or "/",
@@ -697,6 +729,7 @@ def list_large_files_data(path: str = "/", min_size_mb: int = 100, limit: int = 
                 "source": "remote_host",
             }
         )
+    normalized_files = _filter_pseudo_file_items(normalized_files)
 
     return {
         "ok": True,

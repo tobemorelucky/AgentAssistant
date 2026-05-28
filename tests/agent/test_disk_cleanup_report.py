@@ -104,6 +104,31 @@ def test_disk_cleanup_remote_report_marks_realtime_evidence():
     assert "92.4%" not in report
 
 
+def test_disk_cleanup_report_filters_pseudo_filesystem_paths():
+    past_steps = [
+        (
+            "璋冪敤 get_disk_usage 鑾峰彇褰撳墠涓绘満鏍规寕杞界偣 / 鐨勭鐩樹娇鐢ㄧ巼璇佹嵁銆?",
+            '{"host":"he-VMware-Virtual-Platform","mount":"/","usage_percent":81.5,"used_gb":31.8,"total_gb":39.1,"available_gb":5.2,"status":"warning","source":"remote_host"}',
+        ),
+        (
+            "璋冪敤 list_large_directories 鑾峰彇 / 涓嬬殑楂樺崰鐢ㄧ洰褰曟帓琛岋紝瀹氫綅 Top 鐩綍鍗犵敤銆?",
+            '{"path":"/","limit":10,"directories":[{"path":"/proc","size_gb":131071.99,"source":"remote_host"},{"path":"/sys","size_gb":0.48,"source":"remote_host"},{"path":"/dev","size_gb":1.0,"source":"remote_host"},{"path":"/var","size_gb":4.12,"source":"remote_host"},{"path":"/usr","size_gb":5.37,"source":"remote_host"}],"source":"remote_host"}',
+        ),
+        (
+            "璋冪敤 list_large_files 鑾峰彇 / 涓嬬殑澶ф枃浠舵竻鍗曪紝瀹氫綅鏈€鍗犵┖闂寸殑鏂囦欢銆?",
+            '{"ok":true,"path":"/","scan_root":"/","min_size_mb":100,"limit":20,"files":[{"path":"/proc/kcore","size_mb":1024,"source":"remote_host"},{"path":"/swap.img","size_mb":4096,"size_gb":4.0,"source":"remote_host"}],"source":"remote_host"}',
+        ),
+    ]
+
+    report = disk_cleanup.build_disk_cleanup_report("请检查服务器当前磁盘空间使用情况，并分析主要占用来源。", past_steps)
+
+    assert "/proc" not in report
+    assert "/sys" not in report
+    assert "/dev" not in report
+    assert "/swap.img" in report
+    assert "/var" in report or "/usr" in report
+
+
 def test_disk_cleanup_verifier_fails_unknown_report():
     bad_report = """
     # AIOps 磁盘清理诊断报告

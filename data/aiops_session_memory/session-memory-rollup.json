@@ -1,0 +1,146 @@
+{
+  "session_id": "session-memory-rollup",
+  "long_term_summary": "摘要 15 轮",
+  "recent_turns": [
+    {
+      "turn_id": "turn-16",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 16",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 16 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-17",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 17",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 17 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-18",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 18",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 18 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-19",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 19",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 19 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-20",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 20",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 20 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-21",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 21",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 21 轮诊断摘要",
+      "remediation_candidates": []
+    }
+  ],
+  "turn_count": 21,
+  "updated_at": "2026-06-06T11:48:26.352714+00:00"
+}

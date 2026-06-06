@@ -20,6 +20,7 @@ from app.agent.aiops import (
 from app.agent.aiops import followup_context
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
 from app.agent.aiops.incident_memory import build_incident_record
+from app.agent.aiops.memory.session_memory import append_session_turn, build_session_context, build_turn_summary
 from app.agent.aiops.patrol import summarize_structured_tool_result
 from app.agent.aiops.remediation.candidate_builder import build_remediation_candidates
 from app.agent.aiops.remediation.candidate_builder import render_remediation_candidates
@@ -309,6 +310,7 @@ class AIOpsService:
         pending_payload = runtime_store.load_pending_actions(session_id)
         pending_status = pending_payload.get("status")
         remediation_feedback_failed = followup_context.is_remediation_feedback_failed(user_input or "")
+        session_context = build_session_context(session_id)
         previous_aiops_context = runtime_store.load_previous_aiops_context(session_id)
         if not previous_aiops_context and snapshot and snapshot.get("state"):
             previous_aiops_context = (
@@ -321,6 +323,23 @@ class AIOpsService:
             "dependent_followup",
         } or (followup_relation.get("relation_type") == "ambiguous" and followup_has_context)
         initial_trace_events: list[dict[str, Any]] = []
+        initial_trace_events.append(
+            create_trace_event(
+                session_id=session_id,
+                node="session_memory",
+                status="success",
+                title="Session memory loaded",
+                result_summary=(
+                    f"loaded recent {len(session_context.get('recent_turns', []))} turns, "
+                    f"summary={bool(session_context.get('long_term_summary'))}"
+                ),
+                metadata={
+                    "turn_count": session_context.get("turn_count", 0),
+                    "recent_turn_count": len(session_context.get("recent_turns", [])),
+                    "has_long_term_summary": bool(session_context.get("long_term_summary")),
+                },
+            )
+        )
         if followup_has_context:
             initial_trace_events.append(
                 create_trace_event(
@@ -419,6 +438,10 @@ class AIOpsService:
             "remediation_candidates": [],
             "remediation_feedback_failed": remediation_feedback_failed,
             "previous_aiops_context": previous_aiops_context,
+            "session_context": session_context,
+            "session_long_term_summary": session_context.get("long_term_summary", ""),
+            "session_recent_turns": session_context.get("recent_turns", []),
+            "session_turn_count": int(session_context.get("turn_count", 0)),
             "followup_relation": followup_relation,
             "followup_resolution": None,
             "incident_record": {},
@@ -602,6 +625,17 @@ class AIOpsService:
             current_state["incident_record"] = build_incident_record(current_state)
             current_state["previous_aiops_context"] = followup_context.build_previous_aiops_context(current_state)
             runtime_store.save_previous_aiops_context(session_id, current_state["previous_aiops_context"])
+            session_memory = await append_session_turn(session_id, build_turn_summary(current_state, status="completed"))
+            current_state["session_context"] = {
+                "session_id": session_id,
+                "long_term_summary": session_memory.get("long_term_summary", ""),
+                "recent_turns": session_memory.get("recent_turns", []),
+                "turn_count": session_memory.get("turn_count", 0),
+                "updated_at": session_memory.get("updated_at", ""),
+            }
+            current_state["session_long_term_summary"] = current_state["session_context"]["long_term_summary"]
+            current_state["session_recent_turns"] = current_state["session_context"]["recent_turns"]
+            current_state["session_turn_count"] = current_state["session_context"]["turn_count"]
             runtime_store.save_session(session_id, current_state, "completed")
             yield {
                 "type": "complete",
@@ -620,6 +654,10 @@ class AIOpsService:
                 result_summary=str(exc),
             )
             append_trace_event(session_id, error_trace)
+            failure_state = dict(current_state)
+            failure_state["response"] = str(exc)
+            failure_state["status"] = "failed"
+            await append_session_turn(session_id, build_turn_summary(failure_state, status="failed"))
             yield {"type": "trace", "stage": "error", "trace": error_trace}
             yield {
                 "type": "error",

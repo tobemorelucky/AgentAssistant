@@ -40,6 +40,10 @@ class PlanExecuteState(TypedDict, total=False):
     remediation_candidates: List[dict[str, Any]]
     remediation_feedback_failed: bool
     previous_aiops_context: dict[str, Any] | None
+    session_context: dict[str, Any] | None
+    session_long_term_summary: str
+    session_recent_turns: List[dict[str, Any]]
+    session_turn_count: int
     followup_relation: dict[str, Any] | None
     followup_resolution: dict[str, Any] | None
     incident_record: dict[str, Any]

@@ -1,0 +1,146 @@
+{
+  "session_id": "session-memory-fallback",
+  "long_term_summary": "常见诊断类型：cpu_pressure_profile\n常用工具：get_cpu_summary、list_top_cpu_processes\n最近结论：第 13 轮诊断摘要；第 14 轮诊断摘要；第 15 轮诊断摘要\n历史结论仅作上下文参考，不替代当前实时证据。",
+  "recent_turns": [
+    {
+      "turn_id": "turn-16",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 16",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 16 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-17",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 17",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 17 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-18",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 18",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 18 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-19",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 19",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 19 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-20",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 20",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 20 轮诊断摘要",
+      "remediation_candidates": []
+    },
+    {
+      "turn_id": "turn-21",
+      "created_at": "2026-06-06T00:00:00+00:00",
+      "status": "completed",
+      "user_input": "问题 21",
+      "mode": "custom",
+      "selected_profile": "cpu_pressure_profile",
+      "plan_source": "investigation_runtime",
+      "tools_used": [
+        "get_cpu_summary",
+        "list_top_cpu_processes"
+      ],
+      "evidence_summary": {
+        "cpu_summary": {
+          "status": "collected",
+          "usage_percent": 88.7
+        }
+      },
+      "verifier_passed": true,
+      "risk_events": [],
+      "final_report_summary": "第 21 轮诊断摘要",
+      "remediation_candidates": []
+    }
+  ],
+  "turn_count": 21,
+  "updated_at": "2026-06-06T11:48:26.378388+00:00"
+}

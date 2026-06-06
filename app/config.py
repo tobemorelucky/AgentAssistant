@@ -74,6 +74,11 @@ class Settings(BaseSettings):
     aiops_heartbeat_trigger_deep_diagnosis: bool = True
     aiops_heartbeat_store_report: bool = True
     aiops_heartbeat_max_concurrent_runs: int = 1
+    aiops_session_memory_enabled: bool = True
+    aiops_session_memory_backend: str = "file"
+    aiops_session_memory_window: int = 20
+    aiops_session_memory_summarize_batch: int = 15
+    aiops_session_memory_max_turn_chars: int = 4000
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 

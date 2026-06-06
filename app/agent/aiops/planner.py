@@ -217,6 +217,38 @@ def _incident_context(similar_incidents: list[dict[str, Any]]) -> str:
     )
 
 
+def _session_context_block(session_long_term_summary: str, session_recent_turns: list[dict[str, Any]]) -> str:
+    if not session_long_term_summary and not session_recent_turns:
+        return "No prior session memory."
+    lines = ["【会话历史上下文】"]
+    if session_long_term_summary:
+        lines.append(f"- 长期摘要：{session_long_term_summary}")
+    if session_recent_turns:
+        lines.append(f"- 最近 {len(session_recent_turns)} 轮：")
+        for index, turn in enumerate(session_recent_turns[:20], start=1):
+            if not isinstance(turn, dict):
+                continue
+            lines.append(f"  {index}. 用户问题：{turn.get('user_input') or ''}")
+            lines.append(f"     诊断类型：{turn.get('selected_profile') or turn.get('mode') or '未标注'}")
+            tools_used = turn.get("tools_used") or []
+            lines.append(f"     使用工具：{', '.join(str(tool) for tool in tools_used[:8]) if tools_used else '无'}")
+            lines.append(f"     结论摘要：{turn.get('final_report_summary') or '无'}")
+            risk_events = turn.get("risk_events") or []
+            lines.append(f"     风险/审批事件：{'；'.join(str(item) for item in risk_events[:4]) if risk_events else '无'}")
+    lines.extend(
+        [
+            "",
+            "使用要求：",
+            "- 会话历史仅作上下文参考。",
+            "- 不得用历史结论替代当前实时证据。",
+            "- 如果当前问题是新问题，仍要基于当前工具证据诊断。",
+            "- 历史 forbidden action 或审批记录不能直接转换为本轮自动执行。",
+            "- 如果当前问题与历史无关，只做轻量参考，不强行关联。",
+        ]
+    )
+    return "\n".join(lines)
+
+
 def _build_controlled_profile_gap_report(
     input_text: str,
     *,
@@ -308,6 +340,8 @@ async def _resolve_followup_resolution(
     input_text: str,
     previous_aiops_context: dict[str, Any],
     remediation_feedback_failed: bool,
+    session_long_term_summary: str = "",
+    session_recent_turns: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     llm = llm_factory.create_qwen_chat_model(
         preferred_model=config.rag_model,
@@ -320,6 +354,7 @@ async def _resolve_followup_resolution(
         result = await chain.ainvoke(
             {
                 "messages": [
+                    ("user", _session_context_block(session_long_term_summary, session_recent_turns or [])),
                     ("user", package),
                     (
                         "user",
@@ -383,6 +418,8 @@ async def _answer_followup_from_previous_context(
     input_text: str,
     previous_aiops_context: dict[str, Any],
     resolution_reason: str,
+    session_long_term_summary: str = "",
+    session_recent_turns: list[dict[str, Any]] | None = None,
 ) -> str:
     llm = llm_factory.create_qwen_chat_model(
         preferred_model=config.rag_model,
@@ -395,6 +432,7 @@ async def _answer_followup_from_previous_context(
         result = await chain.ainvoke(
             {
                 "messages": [
+                    ("user", _session_context_block(session_long_term_summary, session_recent_turns or [])),
                     ("user", package),
                     ("user", f"Reason for this handling: {resolution_reason}. Answer the follow-up in concise Markdown."),
                 ]
@@ -621,6 +659,8 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     trace_events: list[dict[str, Any]] = []
     previous_aiops_context = state.get("previous_aiops_context") or {}
     followup_relation = state.get("followup_relation") or {}
+    session_long_term_summary = str(state.get("session_long_term_summary") or "")
+    session_recent_turns = list(state.get("session_recent_turns") or [])
 
     if followup_relation.get("relation_type") in {"dependent_followup", "ambiguous"}:
         if not previous_aiops_context:
@@ -644,6 +684,8 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
             input_text=input_text,
             previous_aiops_context=previous_aiops_context,
             remediation_feedback_failed=bool(state.get("remediation_feedback_failed")),
+            session_long_term_summary=session_long_term_summary,
+            session_recent_turns=session_recent_turns,
         )
         previous_profile_id = previous_aiops_context.get("previous_profile_id")
         previous_profile = get_profile(previous_profile_id) if previous_profile_id else None
@@ -678,6 +720,8 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                 input_text=input_text,
                 previous_aiops_context=previous_aiops_context,
                 resolution_reason=str(resolution.get("reason") or ""),
+                session_long_term_summary=session_long_term_summary,
+                session_recent_turns=session_recent_turns,
             )
             return {
                 "response": report,

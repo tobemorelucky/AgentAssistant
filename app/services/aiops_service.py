@@ -26,6 +26,7 @@ from app.agent.aiops.remediation.candidate_builder import build_remediation_cand
 from app.agent.aiops.remediation.candidate_builder import render_remediation_candidates
 from app.agent.aiops.runtime_store import runtime_store
 from app.agent.aiops.trace import append_trace_event, create_trace_event
+from app.config import config
 
 
 NODE_SKILL_ROUTER = "skill_router"
@@ -311,6 +312,7 @@ class AIOpsService:
         pending_status = pending_payload.get("status")
         remediation_feedback_failed = followup_context.is_remediation_feedback_failed(user_input or "")
         session_context = build_session_context(session_id)
+        session_memory_enabled = bool(config.aiops_session_memory_enabled)
         previous_aiops_context = runtime_store.load_previous_aiops_context(session_id)
         if not previous_aiops_context and snapshot and snapshot.get("state"):
             previous_aiops_context = (
@@ -327,13 +329,16 @@ class AIOpsService:
             create_trace_event(
                 session_id=session_id,
                 node="session_memory",
-                status="success",
-                title="Session memory loaded",
+                status="success" if session_memory_enabled else "warning",
+                title="Session memory loaded" if session_memory_enabled else "Session memory disabled",
                 result_summary=(
                     f"loaded recent {len(session_context.get('recent_turns', []))} turns, "
                     f"summary={bool(session_context.get('long_term_summary'))}"
+                    if session_memory_enabled
+                    else "session memory disabled"
                 ),
                 metadata={
+                    "enabled": session_memory_enabled,
                     "turn_count": session_context.get("turn_count", 0),
                     "recent_turn_count": len(session_context.get("recent_turns", [])),
                     "has_long_term_summary": bool(session_context.get("long_term_summary")),
@@ -657,6 +662,7 @@ class AIOpsService:
             failure_state = dict(current_state)
             failure_state["response"] = str(exc)
             failure_state["status"] = "failed"
+            failure_state["error_summary"] = str(exc)
             await append_session_turn(session_id, build_turn_summary(failure_state, status="failed"))
             yield {"type": "trace", "stage": "error", "trace": error_trace}
             yield {

@@ -249,6 +249,68 @@ def _session_context_block(session_long_term_summary: str, session_recent_turns:
     return "\n".join(lines)
 
 
+def _planner_session_context_block(
+    session_long_term_summary: str,
+    session_recent_turns: list[dict[str, Any]],
+) -> str:
+    if not session_long_term_summary and not session_recent_turns:
+        return "No prior session memory."
+    lines = ["【会话历史上下文】"]
+    if session_long_term_summary:
+        lines.append("长期摘要：")
+        lines.append(session_long_term_summary)
+    if session_recent_turns:
+        lines.append("")
+        lines.append(f"最近 {len(session_recent_turns)} 轮诊断：")
+        for index, turn in enumerate(session_recent_turns[:20], start=1):
+            if not isinstance(turn, dict):
+                continue
+            tools_used = turn.get("tools_used") or []
+            risk_events = turn.get("risk_events") or []
+            lines.append(f"{index}. 用户问题：{turn.get('user_input') or ''}")
+            lines.append(f"   诊断 Profile：{turn.get('selected_profile') or turn.get('mode') or '未标注'}")
+            lines.append(f"   使用工具：{', '.join(str(tool) for tool in tools_used[:8]) if tools_used else '无'}")
+            lines.append(f"   结论摘要：{turn.get('final_report_summary') or '无'}")
+            lines.append(f"   风险/审批事件：{' | '.join(str(item) for item in risk_events[:4]) if risk_events else '无'}")
+    lines.extend(
+        [
+            "",
+            "约束：",
+            "- 会话历史只作为参考，不是当前实时证据。",
+            "- 当前 CPU、内存、磁盘、进程状态必须以本轮工具调用为准。",
+            "- 不能因为历史里出现过某个根因，就直接复用为本轮根因。",
+            "- 不能因为历史里出现过某个处置动作，就自动执行。",
+            "- 对 investigation_runtime 路径，历史不能替代 required evidence，也不能因为历史成功就直接出报告。",
+            "- 如果当前问题和历史无关，只做轻量参考，不要强行关联。",
+        ]
+    )
+    return "\n".join(lines)
+
+
+def _planner_session_memory_trace_event(
+    *,
+    session_id: str,
+    session_long_term_summary: str,
+    session_recent_turns: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not session_long_term_summary and not session_recent_turns:
+        return None
+    return create_trace_event(
+        session_id=session_id,
+        node="planner",
+        status="success",
+        title="Session memory referenced by planner",
+        result_summary=(
+            f"recent_turns={len(session_recent_turns)}, "
+            f"has_long_term_summary={bool(session_long_term_summary)}"
+        ),
+        metadata={
+            "recent_turn_count": len(session_recent_turns),
+            "has_long_term_summary": bool(session_long_term_summary),
+        },
+    )
+
+
 def _build_controlled_profile_gap_report(
     input_text: str,
     *,
@@ -298,6 +360,7 @@ def _build_controlled_profile_gap_result(
     matched_skills: list[dict[str, Any]],
     selected_profile: dict[str, Any] | None,
     similar_incidents: list[dict[str, Any]],
+    trace_events: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     report = _build_controlled_profile_gap_report(
         input_text,
@@ -312,7 +375,7 @@ def _build_controlled_profile_gap_result(
         hard_limit_reached=True,
         reason="No execution_profile matched for controlled custom diagnosis.",
     )
-    trace_event = create_trace_event(
+    planner_trace = create_trace_event(
         session_id=session_id,
         node="planner",
         status="warning",
@@ -331,7 +394,7 @@ def _build_controlled_profile_gap_result(
         "selected_profile": selected_profile,
         "evidence_store": evidence_store,
         "stop_decision": _model_to_dict(stop_decision),
-        "trace_events": [trace_event],
+        "trace_events": [*(trace_events or []), planner_trace],
     }
 
 
@@ -354,7 +417,7 @@ async def _resolve_followup_resolution(
         result = await chain.ainvoke(
             {
                 "messages": [
-                    ("user", _session_context_block(session_long_term_summary, session_recent_turns or [])),
+                    ("user", _planner_session_context_block(session_long_term_summary, session_recent_turns or [])),
                     ("user", package),
                     (
                         "user",
@@ -432,7 +495,7 @@ async def _answer_followup_from_previous_context(
         result = await chain.ainvoke(
             {
                 "messages": [
-                    ("user", _session_context_block(session_long_term_summary, session_recent_turns or [])),
+                    ("user", _planner_session_context_block(session_long_term_summary, session_recent_turns or [])),
                     ("user", package),
                     ("user", f"Reason for this handling: {resolution_reason}. Answer the follow-up in concise Markdown."),
                 ]
@@ -661,6 +724,13 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     followup_relation = state.get("followup_relation") or {}
     session_long_term_summary = str(state.get("session_long_term_summary") or "")
     session_recent_turns = list(state.get("session_recent_turns") or [])
+    session_memory_trace = _planner_session_memory_trace_event(
+        session_id=session_id,
+        session_long_term_summary=session_long_term_summary,
+        session_recent_turns=session_recent_turns,
+    )
+    if session_memory_trace:
+        trace_events.append(session_memory_trace)
 
     if followup_relation.get("relation_type") in {"dependent_followup", "ambiguous"}:
         if not previous_aiops_context:
@@ -846,4 +916,5 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
         matched_skills=matched_skills,
         selected_profile=selected_profile,
         similar_incidents=similar_incidents,
+        trace_events=trace_events,
     )

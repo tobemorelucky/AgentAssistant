@@ -123,7 +123,11 @@ def load_session_memory(session_id: str) -> dict[str, Any]:
     memory.update(payload)
     memory["session_id"] = session_id
     memory["long_term_summary"] = _sanitize_scalar(memory.get("long_term_summary"), max_length=12000) or ""
-    memory["recent_turns"] = [turn for turn in list(memory.get("recent_turns") or []) if isinstance(turn, dict)]
+    memory["recent_turns"] = [
+        _sanitize_turn_payload(turn)
+        for turn in list(memory.get("recent_turns") or [])
+        if isinstance(turn, dict)
+    ]
     memory["turn_count"] = int(memory.get("turn_count") or len(memory["recent_turns"]))
     memory["updated_at"] = str(memory.get("updated_at") or "")
     return memory
@@ -137,9 +141,23 @@ def save_session_memory(session_id: str, payload: dict[str, Any]) -> None:
     memory.update(payload or {})
     memory["session_id"] = session_id
     memory["updated_at"] = _now_iso()
-    memory["recent_turns"] = [turn for turn in list(memory.get("recent_turns") or []) if isinstance(turn, dict)]
+    memory["recent_turns"] = [
+        _sanitize_turn_payload(turn)
+        for turn in list(memory.get("recent_turns") or [])
+        if isinstance(turn, dict)
+    ]
     memory["turn_count"] = int(memory.get("turn_count") or len(memory["recent_turns"]))
     _write_json(_session_memory_path(session_id), memory)
+
+
+def clear_session_memory(session_id: str) -> dict[str, Any]:
+    path = _session_memory_path(session_id)
+    try:
+        if path.exists():
+            path.unlink()
+    except FileNotFoundError:
+        pass
+    return _default_memory(session_id)
 
 
 def build_session_context(session_id: str) -> dict[str, Any]:

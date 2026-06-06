@@ -75,6 +75,7 @@ class Settings(BaseSettings):
     aiops_heartbeat_store_report: bool = True
     aiops_heartbeat_max_concurrent_runs: int = 1
     aiops_session_memory_enabled: bool = True
+    aiops_session_memory_debug_api: bool = False
     aiops_session_memory_backend: str = "file"
     aiops_session_memory_window: int = 20
     aiops_session_memory_summarize_batch: int = 15

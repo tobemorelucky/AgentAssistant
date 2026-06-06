@@ -10,15 +10,26 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.aiops.heartbeat import heartbeat_manager
+from app.agent.aiops.memory.session_memory import clear_session_memory, load_session_memory
 from app.agent.aiops.remediation import evaluate_action_policy
 from app.agent.aiops.runtime_store import runtime_store
 from app.models.agent import HeartbeatRunRequest, RemediationDryRunRequest, RemediationExecuteRequest
 from app.models.aiops import AIOpsRequest
 from app.monitoring.monitor_provider import dry_run_remediation_action, execute_remediation_action
 from app.services.aiops_service import DEFAULT_AIOPS_TASK, aiops_service
+from app.config import config
 
 
 router = APIRouter()
+
+
+def _session_memory_debug_api_enabled() -> bool:
+    return bool(config.debug or getattr(config, "aiops_session_memory_debug_api", False))
+
+
+def _ensure_session_memory_debug_api_enabled() -> None:
+    if not _session_memory_debug_api_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
 
 
 @router.post("/aiops")
@@ -126,3 +137,17 @@ async def remediation_execute(request: RemediationExecuteRequest):
     if result.get("ok") is False:
         raise HTTPException(status_code=400, detail=result)
     return {"code": 200, "message": "success", "data": result}
+
+
+@router.get("/v1/aiops/session-memory/{session_id}")
+async def get_session_memory_debug(session_id: str):
+    _ensure_session_memory_debug_api_enabled()
+    memory = load_session_memory(session_id)
+    return {"code": 200, "message": "success", "data": memory}
+
+
+@router.delete("/v1/aiops/session-memory/{session_id}")
+async def delete_session_memory_debug(session_id: str):
+    _ensure_session_memory_debug_api_enabled()
+    memory = clear_session_memory(session_id)
+    return {"code": 200, "message": "success", "data": memory}

@@ -21,6 +21,14 @@
   - summary prompts are deterministically truncated before 12000 chars
 - Failure turns
   - failed turns now persist `error_summary` together with the original task
+- Planner integration
+  - session memory is now referenced by the planner for non-follow-up requests too
+  - planner emits `Session memory referenced by planner`
+  - investigation runtime still must collect current required evidence
+- Debug API
+  - added GET and DELETE debug endpoints for session memory
+  - endpoints are only available when `DEBUG=true` or `AIOPS_SESSION_MEMORY_DEBUG_API=true`
+  - delete only removes sanitized files under `data/aiops_session_memory`
 
 ## Files
 - `app/agent/aiops/memory/session_memory.py`

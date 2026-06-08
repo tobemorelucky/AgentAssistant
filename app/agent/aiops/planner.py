@@ -10,7 +10,7 @@ from loguru import logger
 from pydantic import BaseModel, Field
 
 from app.agent.aiops.followup_context import build_followup_context_package
-from app.agent.aiops.incident_memory import find_similar_incidents
+from app.agent.aiops.memory.incident_memory import search_similar_incidents
 from app.agent.aiops.investigation import (
     build_evidence_store,
     build_unsupported_profile_report,
@@ -209,12 +209,99 @@ def _skill_context(skills: list[dict[str, Any]]) -> str:
 def _incident_context(similar_incidents: list[dict[str, Any]]) -> str:
     if not similar_incidents:
         return "No similar incident cases."
-    return "\n\n".join(
-        f"- Task: {incident.get('user_task', '')}\n"
-        f"  Root cause: {incident.get('root_cause', '')}\n"
-        f"  Tools: {', '.join(incident.get('tools_used', []) or [])}"
-        for incident in similar_incidents
+    blocks: list[str] = ["【相似历史故障案例】"]
+    for index, incident in enumerate(similar_incidents[:3], start=1):
+        matched_reasons = incident.get("matched_reasons") or []
+        metrics = incident.get("abnormal_metrics") or []
+        tools_used = incident.get("tools_used") or []
+        blocks.extend(
+            [
+                f"{index}. 时间：{incident.get('created_at', '')}",
+                f"   Profile：{incident.get('profile_id', '')}",
+                f"   故障现象：{incident.get('symptom', '')}",
+                f"   异常指标：{str(metrics)[:240] if metrics else '无'}",
+                f"   使用工具：{', '.join(str(tool) for tool in tools_used[:8]) if tools_used else '无'}",
+                f"   历史根因：{incident.get('root_cause_summary', '')}",
+                f"   历史处理建议：{incident.get('final_report_summary', '')}",
+                f"   是否解决：{incident.get('resolved', False)}",
+                f"   相似原因：{', '.join(str(reason) for reason in matched_reasons[:4]) if matched_reasons else '无'}",
+            ]
+        )
+    blocks.extend(
+        [
+            "",
+            "约束：",
+            "- 历史案例只作为参考。",
+            "- 不能用历史结论替代当前实时证据。",
+            "- 当前 CPU / 内存 / 磁盘 / 进程状态必须以本轮工具调用为准。",
+            "- 不能因为历史里执行过某个动作，就自动执行本轮动作。",
+            "- 如果历史案例与当前证据冲突，以当前证据为准。",
+            "- forbidden action 即使在历史案例中出现，也不得自动执行。",
+        ]
     )
+    return "\n".join(blocks)
+
+
+def _incident_memory_trace_event(
+    *,
+    session_id: str,
+    profile_id: str,
+    similar_incidents: list[dict[str, Any]],
+    top_k: int,
+) -> dict[str, Any]:
+    incident_ids = [str(item.get("incident_id")) for item in similar_incidents if item.get("incident_id")]
+    if similar_incidents:
+        return create_trace_event(
+            session_id=session_id,
+            node="incident_memory",
+            status="success",
+            title="Similar incidents retrieved",
+            result_summary=f"found {len(similar_incidents)} similar incidents",
+            metadata={
+                "top_k": top_k,
+                "profile_id": profile_id,
+                "incident_ids": incident_ids[:top_k],
+            },
+        )
+    return create_trace_event(
+        session_id=session_id,
+        node="incident_memory",
+        status="success",
+        title="No similar incidents found",
+        result_summary="found 0 similar incidents",
+        metadata={
+            "top_k": top_k,
+            "profile_id": profile_id,
+            "incident_ids": [],
+        },
+    )
+
+
+def _candidate_profile_id(selected_profile: dict[str, Any] | None, matched_skills: list[dict[str, Any]]) -> str:
+    profile_id = selected_profile.get("profile_id") if isinstance(selected_profile, dict) else None
+    if profile_id:
+        return str(profile_id)
+    for skill in matched_skills or []:
+        if isinstance(skill, dict) and skill.get("profile_id"):
+            return str(skill.get("profile_id"))
+    return ""
+
+
+def _incident_target_context(state: PlanExecuteState) -> tuple[str | None, str | None]:
+    target_alert = state.get("target_alert") or {}
+    if isinstance(target_alert, dict):
+        asset_name = target_alert.get("service_name") or target_alert.get("asset_name")
+        host = target_alert.get("host")
+        return (
+            str(asset_name).strip() if asset_name else None,
+            str(host).strip() if host else None,
+        )
+    previous_context = state.get("previous_aiops_context") or {}
+    if isinstance(previous_context, dict):
+        target_object = str(previous_context.get("previous_target_object") or "").strip()
+        if target_object:
+            return target_object, target_object
+    return None, None
 
 
 def _session_context_block(session_long_term_summary: str, session_recent_turns: list[dict[str, Any]]) -> str:
@@ -405,6 +492,7 @@ async def _resolve_followup_resolution(
     remediation_feedback_failed: bool,
     session_long_term_summary: str = "",
     session_recent_turns: list[dict[str, Any]] | None = None,
+    similar_incidents: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     llm = llm_factory.create_qwen_chat_model(
         preferred_model=config.rag_model,
@@ -418,6 +506,7 @@ async def _resolve_followup_resolution(
             {
                 "messages": [
                     ("user", _planner_session_context_block(session_long_term_summary, session_recent_turns or [])),
+                    ("user", _incident_context(similar_incidents or [])),
                     ("user", package),
                     (
                         "user",
@@ -483,6 +572,7 @@ async def _answer_followup_from_previous_context(
     resolution_reason: str,
     session_long_term_summary: str = "",
     session_recent_turns: list[dict[str, Any]] | None = None,
+    similar_incidents: list[dict[str, Any]] | None = None,
 ) -> str:
     llm = llm_factory.create_qwen_chat_model(
         preferred_model=config.rag_model,
@@ -496,6 +586,7 @@ async def _answer_followup_from_previous_context(
             {
                 "messages": [
                     ("user", _planner_session_context_block(session_long_term_summary, session_recent_turns or [])),
+                    ("user", _incident_context(similar_incidents or [])),
                     ("user", package),
                     ("user", f"Reason for this handling: {resolution_reason}. Answer the follow-up in concise Markdown."),
                 ]
@@ -716,7 +807,16 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     tool_map = {tool.name if hasattr(tool, "name") else str(tool): tool for tool in all_tools}
     tool_names = list(tool_map.keys())
 
-    similar_incidents = find_similar_incidents(input_text, limit=3)
+    candidate_profile_id = _candidate_profile_id(selected_profile, matched_skills)
+    candidate_asset_name, candidate_host = _incident_target_context(state)
+    top_k = max(1, int(getattr(config, "aiops_incident_memory_top_k", 3) or 3))
+    similar_incidents = search_similar_incidents(
+        input_text,
+        profile_id=candidate_profile_id or None,
+        asset_name=candidate_asset_name,
+        host=candidate_host,
+        top_k=top_k,
+    )
     active_alerts = list(state.get("active_alerts", []) or [])
     target_alert = state.get("target_alert")
     trace_events: list[dict[str, Any]] = []
@@ -731,6 +831,14 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
     )
     if session_memory_trace:
         trace_events.append(session_memory_trace)
+    trace_events.append(
+        _incident_memory_trace_event(
+            session_id=session_id,
+            profile_id=candidate_profile_id,
+            similar_incidents=similar_incidents,
+            top_k=top_k,
+        )
+    )
 
     if followup_relation.get("relation_type") in {"dependent_followup", "ambiguous"}:
         if not previous_aiops_context:
@@ -756,6 +864,7 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
             remediation_feedback_failed=bool(state.get("remediation_feedback_failed")),
             session_long_term_summary=session_long_term_summary,
             session_recent_turns=session_recent_turns,
+            similar_incidents=similar_incidents,
         )
         previous_profile_id = previous_aiops_context.get("previous_profile_id")
         previous_profile = get_profile(previous_profile_id) if previous_profile_id else None
@@ -792,6 +901,7 @@ async def planner(state: PlanExecuteState) -> dict[str, Any]:
                 resolution_reason=str(resolution.get("reason") or ""),
                 session_long_term_summary=session_long_term_summary,
                 session_recent_turns=session_recent_turns,
+                similar_incidents=similar_incidents,
             )
             return {
                 "response": report,

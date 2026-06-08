@@ -10,6 +10,7 @@ from loguru import logger
 from sse_starlette.sse import EventSourceResponse
 
 from app.agent.aiops.heartbeat import heartbeat_manager
+from app.agent.aiops.memory.incident_memory import load_recent_incidents, search_similar_incidents
 from app.agent.aiops.memory.session_memory import clear_session_memory, load_session_memory
 from app.agent.aiops.remediation import evaluate_action_policy
 from app.agent.aiops.runtime_store import runtime_store
@@ -29,6 +30,15 @@ def _session_memory_debug_api_enabled() -> bool:
 
 def _ensure_session_memory_debug_api_enabled() -> None:
     if not _session_memory_debug_api_enabled():
+        raise HTTPException(status_code=404, detail="Not found")
+
+
+def _incident_memory_debug_api_enabled() -> bool:
+    return bool(config.debug or getattr(config, "aiops_incident_memory_debug_api", False))
+
+
+def _ensure_incident_memory_debug_api_enabled() -> None:
+    if not _incident_memory_debug_api_enabled():
         raise HTTPException(status_code=404, detail="Not found")
 
 
@@ -151,3 +161,35 @@ async def delete_session_memory_debug(session_id: str):
     _ensure_session_memory_debug_api_enabled()
     memory = clear_session_memory(session_id)
     return {"code": 200, "message": "success", "data": memory}
+
+
+@router.get("/v1/aiops/incidents")
+async def list_incidents_debug(limit: int = 20):
+    _ensure_incident_memory_debug_api_enabled()
+    return {
+        "code": 200,
+        "message": "success",
+        "data": load_recent_incidents(limit=max(1, min(limit, 200))),
+    }
+
+
+@router.get("/v1/aiops/incidents/search")
+async def search_incidents_debug(
+    query: str,
+    profile_id: str | None = None,
+    asset_name: str | None = None,
+    host: str | None = None,
+    top_k: int = 3,
+):
+    _ensure_incident_memory_debug_api_enabled()
+    return {
+        "code": 200,
+        "message": "success",
+        "data": search_similar_incidents(
+            query=query,
+            profile_id=profile_id,
+            asset_name=asset_name,
+            host=host,
+            top_k=max(1, min(top_k, 20)),
+        ),
+    }

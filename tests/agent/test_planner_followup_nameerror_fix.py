@@ -62,6 +62,8 @@ sys.modules.setdefault("app.agent", types.ModuleType("app.agent"))
 sys.modules["app.agent"].__path__ = []  # type: ignore[attr-defined]
 sys.modules.setdefault("app.agent.aiops", types.ModuleType("app.agent.aiops"))
 sys.modules["app.agent.aiops"].__path__ = []  # type: ignore[attr-defined]
+sys.modules.setdefault("app.agent.aiops.memory", types.ModuleType("app.agent.aiops.memory"))
+sys.modules["app.agent.aiops.memory"].__path__ = []  # type: ignore[attr-defined]
 sys.modules.setdefault("app.core", types.ModuleType("app.core"))
 sys.modules["app.core"].__path__ = []  # type: ignore[attr-defined]
 sys.modules.setdefault("app.tools", types.ModuleType("app.tools"))
@@ -74,7 +76,7 @@ _install_stub(
     "app.agent.aiops.followup_context",
     build_followup_context_package=lambda current, previous: f"current={current}; previous={previous}",
 )
-_install_stub("app.agent.aiops.incident_memory", find_similar_incidents=lambda *_args, **_kwargs: [])
+_install_stub("app.agent.aiops.memory.incident_memory", search_similar_incidents=lambda *_args, **_kwargs: [])
 _install_stub(
     "app.agent.aiops.investigation",
     build_evidence_store=lambda *_args, **_kwargs: {},

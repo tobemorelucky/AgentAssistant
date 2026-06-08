@@ -46,8 +46,9 @@ def _load_planner_module():
         "app",
         "app.agent",
         "app.agent.aiops",
+        "app.agent.aiops.memory",
         "app.agent.aiops.followup_context",
-        "app.agent.aiops.incident_memory",
+        "app.agent.aiops.memory.incident_memory",
         "app.agent.aiops.investigation",
         "app.agent.aiops.patrol",
         "app.agent.aiops.profile_loader",
@@ -78,14 +79,17 @@ def _load_planner_module():
     fake_aiops = types.ModuleType("app.agent.aiops")
     fake_aiops.__path__ = []  # type: ignore[attr-defined]
     sys.modules["app.agent.aiops"] = fake_aiops
+    fake_aiops_memory = types.ModuleType("app.agent.aiops.memory")
+    fake_aiops_memory.__path__ = []  # type: ignore[attr-defined]
+    sys.modules["app.agent.aiops.memory"] = fake_aiops_memory
 
     followup_module = types.ModuleType("app.agent.aiops.followup_context")
     followup_module.build_followup_context_package = lambda *_args, **_kwargs: "followup"
     sys.modules["app.agent.aiops.followup_context"] = followup_module
 
-    incident_module = types.ModuleType("app.agent.aiops.incident_memory")
-    incident_module.find_similar_incidents = lambda *_args, **_kwargs: []
-    sys.modules["app.agent.aiops.incident_memory"] = incident_module
+    incident_module = types.ModuleType("app.agent.aiops.memory.incident_memory")
+    incident_module.search_similar_incidents = lambda *_args, **_kwargs: []
+    sys.modules["app.agent.aiops.memory.incident_memory"] = incident_module
 
     investigation_module = types.ModuleType("app.agent.aiops.investigation")
     investigation_module.build_evidence_store = lambda profile=None: {"profile_id": getattr(profile, "profile_id", None)}

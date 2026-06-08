@@ -19,7 +19,7 @@ from app.agent.aiops import (
 )
 from app.agent.aiops import followup_context
 from app.agent.aiops.disk_cleanup import summarize_disk_tool_result, unwrap_structured_payload
-from app.agent.aiops.incident_memory import build_incident_record
+from app.agent.aiops.memory.incident_memory import append_incident, build_incident_record
 from app.agent.aiops.memory.session_memory import append_session_turn, build_session_context, build_turn_summary
 from app.agent.aiops.patrol import summarize_structured_tool_result
 from app.agent.aiops.remediation.candidate_builder import build_remediation_candidates
@@ -628,6 +628,25 @@ class AIOpsService:
                         f"{chr(10).join(candidate_lines)}"
                     )
             current_state["incident_record"] = build_incident_record(current_state)
+            if current_state["incident_record"]:
+                try:
+                    append_incident(current_state["incident_record"])
+                    current_state["memory_persisted"] = True
+                    incident_trace = create_trace_event(
+                        session_id=session_id,
+                        node="incident_memory",
+                        status="success",
+                        title="Incident memory saved",
+                        result_summary=str(current_state["incident_record"].get("profile_id") or "incident_record"),
+                        metadata={
+                            "incident_id": current_state["incident_record"].get("incident_id"),
+                            "status": current_state["incident_record"].get("status"),
+                        },
+                    )
+                    append_trace_event(session_id, incident_trace)
+                    yield {"type": "trace", "stage": "incident_memory", "trace": incident_trace}
+                except Exception as incident_exc:
+                    logger.warning(f"[session {session_id}] Incident memory save failed: {incident_exc}")
             current_state["previous_aiops_context"] = followup_context.build_previous_aiops_context(current_state)
             runtime_store.save_previous_aiops_context(session_id, current_state["previous_aiops_context"])
             session_memory = await append_session_turn(session_id, build_turn_summary(current_state, status="completed"))
@@ -663,6 +682,13 @@ class AIOpsService:
             failure_state["response"] = str(exc)
             failure_state["status"] = "failed"
             failure_state["error_summary"] = str(exc)
+            failure_state["incident_record"] = build_incident_record(failure_state, status="failed")
+            if failure_state["incident_record"]:
+                try:
+                    append_incident(failure_state["incident_record"])
+                    failure_state["memory_persisted"] = True
+                except Exception as incident_exc:
+                    logger.warning(f"[session {session_id}] Failed incident memory save failed: {incident_exc}")
             await append_session_turn(session_id, build_turn_summary(failure_state, status="failed"))
             yield {"type": "trace", "stage": "error", "trace": error_trace}
             yield {

@@ -80,6 +80,9 @@ class Settings(BaseSettings):
     aiops_session_memory_window: int = 20
     aiops_session_memory_summarize_batch: int = 15
     aiops_session_memory_max_turn_chars: int = 4000
+    aiops_incident_memory_enabled: bool = True
+    aiops_incident_memory_debug_api: bool = False
+    aiops_incident_memory_top_k: int = 3
     chunk_max_size: int = 800
     chunk_overlap: int = 100
 
